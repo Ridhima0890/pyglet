@@ -1,36 +1,6 @@
-# ----------------------------------------------------------------------------
-# pyglet
-# Copyright (c) 2006-2008 Alex Holkner
-# All rights reserved.
-# 
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions 
-# are met:
-#
-#  * Redistributions of source code must retain the above copyright
-#    notice, this list of conditions and the following disclaimer.
-#  * Redistributions in binary form must reproduce the above copyright 
-#    notice, this list of conditions and the following disclaimer in
-#    the documentation and/or other materials provided with the
-#    distribution.
-#  * Neither the name of pyglet nor the names of its
-#    contributors may be used to endorse or promote products
-#    derived from this software without specific prior written
-#    permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-# FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-# COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-# BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-# ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-# POSSIBILITY OF SUCH DAMAGE.
-# ----------------------------------------------------------------------------
+from __future__ import annotations
+import sys
+
 # Most of this file is win32con.py from Python for Windows Extensions:
 # http://www.python.net/crew/mhammond/win32/
 
@@ -50,24 +20,24 @@ VK_OEM_7 = 0xde
 VK_OEM_8 = 0xdf
 VK_OEM_102 = 0xe2
 
-# Copyright (c) 1994-2001, Mark Hammond 
+# Copyright (c) 1994-2001, Mark Hammond
 # All rights reserved.
-# 
-# Redistribution and use in source and binary forms, with or without 
-# modification, are permitted provided that the following conditions 
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
 # are met:
-# 
-# Redistributions of source code must retain the above copyright notice, 
+#
+# Redistributions of source code must retain the above copyright notice,
 # this list of conditions and the following disclaimer.
-# 
-# Redistributions in binary form must reproduce the above copyright 
-# notice, this list of conditions and the following disclaimer in 
+#
+# Redistributions in binary form must reproduce the above copyright
+# notice, this list of conditions and the following disclaimer in
 # the documentation and/or other materials provided with the distribution.
-# 
-# Neither name of Mark Hammond nor the name of contributors may be used 
-# to endorse or promote products derived from this software without 
-# specific prior written permission. 
-# 
+#
+# Neither name of Mark Hammond nor the name of contributors may be used
+# to endorse or promote products derived from this software without
+# specific prior written permission.
+#
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS
 # IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
 # TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
@@ -1186,8 +1156,17 @@ VK_VOLUME_UP = 0xAF
 VK_MEDIA_NEXT_TRACK = 0xB0
 VK_MEDIA_PREV_TRACK = 0xB1
 VK_MEDIA_PLAY_PAUSE = 0xB3
+VK_LAUNCH_MAIL = 0xB4
+VK_LAUNCH_MEDIA_SELECT = 0xB5
+VK_LAUNCH_APP1 = 0xB6
+VK_LAUNCH_APP2 = 0xB
 VK_BROWSER_BACK = 0xA6
 VK_BROWSER_FORWARD = 0xA7
+VK_BROWSER_REFRESH = 0xA8
+VK_BROWSER_STOP = 0xA9
+VK_BROWSER_SEARCH = 0xAA
+VK_BROWSER_FAVORITES = 0xAB
+VK_BROWSER_HOME = 0xAC
 WH_MIN = (-1)
 WH_MSGFILTER = (-1)
 WH_JOURNALRECORD = 0
@@ -1365,6 +1344,7 @@ WM_COMMNOTIFY = 68
 WM_WINDOWPOSCHANGING = 70
 WM_WINDOWPOSCHANGED = 71
 WM_POWER = 72
+WM_COPYGLOBALDATA = 73
 PWR_OK = 1
 PWR_FAIL = (-1)
 PWR_SUSPENDREQUEST = 1
@@ -1455,6 +1435,9 @@ WM_RBUTTONDBLCLK = 518
 WM_MBUTTONDOWN = 519
 WM_MBUTTONUP = 520
 WM_MBUTTONDBLCLK = 521
+WM_XBUTTONDOWN = 523
+WM_XBUTTONUP = 524
+WM_XBUTTONBDLCLK = 525
 WM_MOUSEWHEEL = 522
 WM_MOUSELAST = 522
 WHEEL_DELTA = 120     # Value for rolling one detent
@@ -1510,6 +1493,8 @@ WM_IME_KEYDOWN = 656
 WM_IME_KEYUP = 657
 WM_MOUSEHOVER = 673
 WM_MOUSELEAVE = 675
+WM_DPICHANGED = 736
+WM_GETDPISCALEDSIZE = 740
 WM_CUT = 768
 WM_COPY = 769
 WM_PASTE = 770
@@ -1611,6 +1596,8 @@ MK_RBUTTON = 2
 MK_SHIFT = 4
 MK_CONTROL = 8
 MK_MBUTTON = 16
+MK_XBUTTON1 = 32
+MK_XBUTTON2 = 64
 TME_HOVER = 1
 TME_LEAVE = 2
 TME_QUERY = 1073741824
@@ -3523,7 +3510,7 @@ ELF_CULTURE_LATIN = 0
 RASTER_FONTTYPE = 1
 DEVICE_FONTTYPE = 2
 TRUETYPE_FONTTYPE = 4
-def PALETTEINDEX(i): return ((16777216 | (i)))
+def PALETTEINDEX(i): return (16777216 | (i))
 
 PC_RESERVED = 1
 PC_EXPLICIT = 2
@@ -3578,42 +3565,42 @@ STOCK_LAST = 16
 CLR_INVALID = -1
 
 # Exception/Status codes from winuser.h and winnt.h
-STATUS_WAIT_0                    = 0    
-STATUS_ABANDONED_WAIT_0          = 128    
-STATUS_USER_APC                  = 192    
-STATUS_TIMEOUT                   = 258    
-STATUS_PENDING                   = 259    
-STATUS_SEGMENT_NOTIFICATION      = 1073741829    
-STATUS_GUARD_PAGE_VIOLATION      = -2147483647    
-STATUS_DATATYPE_MISALIGNMENT     = -2147483646    
-STATUS_BREAKPOINT                = -2147483645    
-STATUS_SINGLE_STEP               = -2147483644    
-STATUS_ACCESS_VIOLATION          = -1073741819    
-STATUS_IN_PAGE_ERROR             = -1073741818    
-STATUS_INVALID_HANDLE            = -1073741816    
-STATUS_NO_MEMORY                 = -1073741801    
-STATUS_ILLEGAL_INSTRUCTION       = -1073741795    
-STATUS_NONCONTINUABLE_EXCEPTION  = -1073741787    
-STATUS_INVALID_DISPOSITION       = -1073741786    
-STATUS_ARRAY_BOUNDS_EXCEEDED     = -1073741684    
-STATUS_FLOAT_DENORMAL_OPERAND    = -1073741683    
-STATUS_FLOAT_DIVIDE_BY_ZERO      = -1073741682    
-STATUS_FLOAT_INEXACT_RESULT      = -1073741681    
-STATUS_FLOAT_INVALID_OPERATION   = -1073741680    
-STATUS_FLOAT_OVERFLOW            = -1073741679    
-STATUS_FLOAT_STACK_CHECK         = -1073741678    
-STATUS_FLOAT_UNDERFLOW           = -1073741677    
-STATUS_INTEGER_DIVIDE_BY_ZERO    = -1073741676    
-STATUS_INTEGER_OVERFLOW          = -1073741675    
-STATUS_PRIVILEGED_INSTRUCTION    = -1073741674    
-STATUS_STACK_OVERFLOW            = -1073741571    
-STATUS_CONTROL_C_EXIT            = -1073741510    
+STATUS_WAIT_0                    = 0
+STATUS_ABANDONED_WAIT_0          = 128
+STATUS_USER_APC                  = 192
+STATUS_TIMEOUT                   = 258
+STATUS_PENDING                   = 259
+STATUS_SEGMENT_NOTIFICATION      = 1073741829
+STATUS_GUARD_PAGE_VIOLATION      = -2147483647
+STATUS_DATATYPE_MISALIGNMENT     = -2147483646
+STATUS_BREAKPOINT                = -2147483645
+STATUS_SINGLE_STEP               = -2147483644
+STATUS_ACCESS_VIOLATION          = -1073741819
+STATUS_IN_PAGE_ERROR             = -1073741818
+STATUS_INVALID_HANDLE            = -1073741816
+STATUS_NO_MEMORY                 = -1073741801
+STATUS_ILLEGAL_INSTRUCTION       = -1073741795
+STATUS_NONCONTINUABLE_EXCEPTION  = -1073741787
+STATUS_INVALID_DISPOSITION       = -1073741786
+STATUS_ARRAY_BOUNDS_EXCEEDED     = -1073741684
+STATUS_FLOAT_DENORMAL_OPERAND    = -1073741683
+STATUS_FLOAT_DIVIDE_BY_ZERO      = -1073741682
+STATUS_FLOAT_INEXACT_RESULT      = -1073741681
+STATUS_FLOAT_INVALID_OPERATION   = -1073741680
+STATUS_FLOAT_OVERFLOW            = -1073741679
+STATUS_FLOAT_STACK_CHECK         = -1073741678
+STATUS_FLOAT_UNDERFLOW           = -1073741677
+STATUS_INTEGER_DIVIDE_BY_ZERO    = -1073741676
+STATUS_INTEGER_OVERFLOW          = -1073741675
+STATUS_PRIVILEGED_INSTRUCTION    = -1073741674
+STATUS_STACK_OVERFLOW            = -1073741571
+STATUS_CONTROL_C_EXIT            = -1073741510
 
 
 WAIT_FAILED                      = -1
 WAIT_OBJECT_0                    = STATUS_WAIT_0 + 0
 
-WAIT_ABANDONED                      = STATUS_ABANDONED_WAIT_0 + 0 
+WAIT_ABANDONED                      = STATUS_ABANDONED_WAIT_0 + 0
 WAIT_ABANDONED_0                    = STATUS_ABANDONED_WAIT_0 + 0
 
 WAIT_TIMEOUT                        = STATUS_TIMEOUT
@@ -4172,6 +4159,19 @@ CF_PRIVATEFIRST = 512
 CF_PRIVATELAST = 767
 CF_GDIOBJFIRST = 768
 CF_GDIOBJLAST = 1023
+DVASPECT_CONTENT = 1
+TYMED_HGLOBAL = 1
+TYMED_FILE = 2
+TYMED_ISTREAM = 4
+TYMED_ISTORAGE = 8
+TYMED_GDI = 16
+TYMED_MFPICT = 32
+TYMED_ENHMF = 64
+TYMED_NULL = 0
+DROPEFFECT_NONE = 0
+DROPEFFECT_COPY = 1
+DROPEFFECT_MOVE = 2
+DROPEFFECT_LINK = 4
 FVIRTKEY =1
 FNOINVERT = 2
 FSHIFT = 4
@@ -4200,7 +4200,7 @@ PM_NOREMOVE = 0
 PM_REMOVE = 1
 PM_NOYIELD = 2
 # Name clashes with key.MOD_ALT, key.MOD_CONTROL and key.MOD_SHIFT
-WIN32_MOD_ALT = 1 
+WIN32_MOD_ALT = 1
 WIN32_MOD_CONTROL = 2
 WIN32_MOD_SHIFT = 4
 WIN32_MOD_WIN = 8
@@ -5001,6 +5001,15 @@ RIDEV_CAPTUREMOUSE = 0x00000200
 RIDEV_NOHOTKEYS = 0x00000200
 RIDEV_APPKEYS = 0x00000400
 RIDEV_EXMODEMASK = 0x000000F0
+RIDEV_EXINPUTSINK = 0x00001000 # Vista+
+RIDEV_DEVNOTIFY = 0x00002000 # Vista+
+
+RI_KEY_MAKE = 0
+RI_KEY_BREAK = 1
+RI_KEY_E0 = 2
+RI_KEY_E1 = 4
+RI_KEY_TERMSRV_SET_LED = 8
+RI_KEY_TERMSRV_SHADOW = 0x10
 
 RIM_TYPEMOUSE = 0
 RIM_TYPEKEYBOARD = 1
@@ -5034,3 +5043,71 @@ RI_MOUSE_BUTTON_5_DOWN = 0x0100
 RI_MOUSE_BUTTON_5_UP = 0x0200
 
 RI_MOUSE_WHEEL = 0x0400
+
+WINDOWS_VISTA_OR_GREATER = sys.getwindowsversion() >= (6, 0)
+WINDOWS_7_OR_GREATER = sys.getwindowsversion() >= (6, 1)
+WINDOWS_8_OR_GREATER = sys.getwindowsversion() >= (6, 2)
+WINDOWS_8_1_OR_GREATER = sys.getwindowsversion() >= (6, 3)
+WINDOWS_10_ANNIVERSARY_UPDATE_OR_GREATER = sys.getwindowsversion() >= (10, 0, 14393)  # 1607
+WINDOWS_10_CREATORS_UPDATE_OR_GREATER = sys.getwindowsversion() >= (10, 0, 15063)  # 1703
+WINDOWS_10_1809_OR_GREATER = sys.getwindowsversion() >= (10, 0, 17763)  # 1809
+WINDOWS_11_21H2_OR_GREATER = sys.getwindowsversion() >= (10, 0, 22000)
+
+MSGFLT_ALLOW = 1
+MSGFLT_DISALLOW = 2
+MSGFLT_RESET = 0
+
+COINIT_APARTMENTTHREADED = 0x2
+COINIT_MULTITHREADED = 0x0
+COINIT_DISABLE_OLE1DDE = 0x4
+COINIT_SPEED_OVER_MEMORY = 0x8
+RPC_E_CHANGED_MODE = -2147417850
+
+MF_ACCESSMODE_READ = 1
+MF_ACCESSMODE_WRITE = 2
+MF_ACCESSMODE_READWRITE = 3
+
+MF_OPENMODE_FAIL_IF_NOT_EXIST = 0
+MF_OPENMODE_FAIL_IF_EXIST = 1
+MF_OPENMODE_RESET_IF_EXIST = 2
+MF_OPENMODE_APPEND_IF_EXIST = 3
+MF_OPENMODE_DELETE_IF_EXIST = 4
+
+MF_FILEFLAGS_NONE = 0
+MF_FILEFLAGS_NOBUFFERING = 1
+
+CLSCTX_INPROC_SERVER = 0x1
+
+# From Dwmapi.h
+DWM_BB_ENABLE = 0x00000001
+DWM_BB_BLURREGION = 0x00000002
+DWM_BB_TRANSITIONONMAXIMIZED = 0x00000004
+
+STREAM_SEEK_SET = 0
+STREAM_SEEK_CUR = 1
+STREAM_SEEK_END = 2
+
+LOCALE_NAME_MAX_LENGTH = 85
+
+DBT_DEVICEARRIVAL = 0x8000
+DBT_DEVICEREMOVECOMPLETE = 0x8004
+
+DBT_DEVTYP_DEVICEINTERFACE = 5
+
+DEVICE_NOTIFY_WINDOW_HANDLE = 0
+DEVICE_NOTIFY_SERVICE_HANDLE = 1
+
+USER_DEFAULT_SCREEN_DPI = 96
+
+QDC_ONLY_ACTIVE_PATHS = 0x00000002
+DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME = 0x00000001
+DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME = 0x00000002
+
+# Since Windows 11 21H2
+DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+DWMWA_WINDOW_CORNER_PREFERENCE = 33
+DWMWA_BORDER_COLOR = 34
+DWMWA_CAPTION_COLOR = 35
+DWMWA_TEXT_COLOR = 36
+DWMWA_VISIBLE_FRAME_BORDER_THICKNESS = 37
+DWMWA_SYSTEMBACKDROP_TYPE = 38

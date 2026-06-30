@@ -1,98 +1,90 @@
-from __future__ import print_function
-from future import standard_library
-standard_library.install_aliases()
 
-import gc
-import inspect
 import pytest
-import queue
 from tests import mock
-import threading
 import time
-import unittest
 
 import pyglet
-#pyglet.options['debug_media'] = True
+_debug = False
+pyglet.options.debug_media = _debug
 
-import pyglet.app  # Will be patched
-from pyglet.media import Player
-from pyglet.media.sources.procedural import Silence
-
-
-# TODO: Move to utility module
-class EventForwarder(threading.Thread):
-    def __init__(self):
-        super(EventForwarder, self).__init__()
-        self.queue = queue.Queue()
-
-    def run(self):
-        while True:
-            destination, event_type, args = self.queue.get()
-            if not destination:
-                break
-            else:
-                destination.dispatch_event(event_type, *args)
-
-    def post_event(self, destination, event_type, *args):
-        self.queue.put((destination, event_type, args))
-
-    def notify(self):
-        pass
-
-    def stop(self):
-        self.queue.put((None, None, None))
-        self.join()
+from pyglet.media import AudioPlayer
+from pyglet.media.synthesis import Silence
+from .mock_player import MockPlayer
 
 
-class PlayerTestCase(unittest.TestCase):
-    """Integration tests for the high-level media player.
+class AudioPlayerTest(MockPlayer, AudioPlayer):
+    pass
 
-    Uses the automatically selected driver for the current platform only."""
-    def setUp(self):
-        self.forwarder = EventForwarder()
-        self.forwarder.start()
 
-        self.event_loop_patch = mock.patch('pyglet.app.platform_event_loop',
-                                           self.forwarder)
-        self.event_loop_patch.start()
+@pytest.fixture
+def player(event_loop):
+    return AudioPlayerTest(event_loop)
 
-    def tearDown(self):
-        self.event_loop_patch.stop()
-        self.forwarder.stop()
 
-    @pytest.mark.xfail
-    def test_unreferenced_cleanup(self):
-        """Test that the player gets cleaned up if there are no references left to it
-        and playback of contained sources has finished."""
-        silence = Silence(.1)
-        player = Player()
-        player_id = id(player)
+class SilentTestSource(Silence):
+    def __init__(self, duration, frequency=440, sample_rate=44800, envelope=None):
+        super().__init__(duration, frequency, sample_rate, envelope)
+        self.bytes_read = 0
 
-        @player.event
-        def on_player_eos():
-            on_player_eos.called = True
-        on_player_eos.called = False
+    def get_audio_data(self, nbytes):
+        data = super().get_audio_data(nbytes)
+        if data is not None:
+            self.bytes_read += data.length
+        return data
 
-        player.queue(silence)
-        player.play()
-        player = None
+    @property
+    def max_offset(self):
+        return self._max_offset
 
-        while not on_player_eos.called:
-            time.sleep(.1)
 
-        gc.collect()
+def test_player_play(player):
+    source = SilentTestSource(.1)
+    player.queue(source)
 
-        for obj in gc.get_objects():
-            if isinstance(obj, Player) and id(obj) == player_id:
-                self.fail('Player should be cleaned up')
-        self.assertListEqual([], gc.garbage, msg='Should not find garbage')
+    player.play()
+    player.wait_for_all_events(
+        1.,
+        'on_eos',
+        'on_player_eos'
+    )
+    assert source.bytes_read == source.max_offset, 'Source not fully played'
+
+
+def test_player_play_multiple(player):
+    sources = (SilentTestSource(.1), SilentTestSource(.1))
+    for source in sources:
+        player.queue(source)
+
+    player.play()
+    player.wait_for_all_events(
+        1.,
+        'on_eos',
+        'on_player_next_source',
+        'on_eos',
+        'on_player_eos'
+    )
+    for source in sources:
+        assert source.bytes_read == source.max_offset, 'Source not fully played'
 
 
 def test_multiple_fire_and_forget_players():
     """
-    Test an issue where the driver crashed when starting multiple players, but not keeping a
-    reference to these players.
+    Test an issue where the driver crashed when starting multiple players, but not
+    keeping a reference to these players.
     """
     for _ in range(10):
         Silence(1).play()
     time.sleep(1)
+
+
+def test_player_silent_audio_driver(player):
+    with mock.patch('pyglet.media.player.get_audio_driver') as get_audio_driver_mock:
+        get_audio_driver_mock.return_value = None
+        source = SilentTestSource(.1)
+        player.queue(source)
+        player.play()
+
+        player.wait_for_all_events(
+            1.,
+            'on_eos',
+            'on_player_eos')

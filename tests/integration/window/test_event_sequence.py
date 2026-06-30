@@ -1,22 +1,20 @@
-from future.standard_library import install_aliases
-install_aliases()
-
-from builtins import object
 import queue
 import unittest
 import time
 
 from pyglet import window
 
+from ...annotations import skip_platform, Platform
 
-class EventSequenceFixture(object):
+
+class EventSequenceFixture:
     def __init__(self, event_loop):
         self.event_loop = event_loop
         self.listen_events = []
         self.received_events = queue.Queue()
 
     def create_window(self, **kwargs):
-        w = event_loop.create_window(**kwargs)
+        w = self.event_loop.create_window(**kwargs)
         w.push_handlers(self)
         return w
 
@@ -42,7 +40,7 @@ class EventSequenceFixture(object):
             self.event_loop.interrupt_event_loop()
 
 
-class EventSequenceTest(object):
+class EventSequenceTest:
     """Base for testing event sequences on a window."""
     next_sequence = 0
     last_sequence = 0
@@ -76,7 +74,7 @@ class WindowShowEventSequenceTest(EventSequenceTest, unittest.TestCase):
     """Event sequence when hidden window is set to visible."""
     last_sequence = 3
 
-    def on_resize(self, width, height):
+    def _on_internal_resize(self, width, height):
         self.check_sequence(1, 'on_resize')
 
     def on_show(self):
@@ -104,7 +102,7 @@ class WindowShowEventSequenceTest(EventSequenceTest, unittest.TestCase):
 class WindowCreateEventSequenceTest(EventSequenceTest, unittest.TestCase):
     last_sequence = 3
 
-    def on_resize(self, width, height):
+    def _on_internal_resize(self, width, height):
         self.check_sequence(1, 'on_resize')
 
     def on_show(self):
@@ -126,10 +124,11 @@ class WindowCreateEventSequenceTest(EventSequenceTest, unittest.TestCase):
             win.close()
 
 
+@skip_platform(Platform.WINDOWS)
 class WindowCreateFullScreenEventSequenceTest(EventSequenceTest, unittest.TestCase):
     last_sequence = 3
 
-    def on_resize(self, width, height):
+    def _on_internal_resize(self, width, height):
         self.check_sequence(1, 'on_resize')
 
     def on_show(self):
@@ -151,10 +150,11 @@ class WindowCreateFullScreenEventSequenceTest(EventSequenceTest, unittest.TestCa
             win.close()
 
 
+@skip_platform(Platform.WINDOWS)
 class WindowSetFullScreenEventSequenceTest(EventSequenceTest, unittest.TestCase):
     last_sequence = 2
 
-    def on_resize(self, width, height):
+    def _on_internal_resize(self, width, height):
         self.check_sequence(1, 'on_resize')
 
     def on_expose(self):
@@ -176,10 +176,11 @@ class WindowSetFullScreenEventSequenceTest(EventSequenceTest, unittest.TestCase)
             win.close()
 
 
+@skip_platform(Platform.WINDOWS)
 class WindowUnsetFullScreenEventSequenceTest(EventSequenceTest, unittest.TestCase):
     last_sequence = 2
 
-    def on_resize(self, width, height):
+    def _on_internal_resize(self, width, height):
         self.check_sequence(1, 'on_resize')
 
     def on_expose(self):

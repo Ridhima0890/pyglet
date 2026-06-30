@@ -6,7 +6,7 @@ import pytest
 
 import pyglet
 from pyglet import clock
-from pyglet import gl
+from pyglet.graphics.api import gl
 from pyglet.graphics import Batch
 from pyglet.text.document import FormattedDocument
 from pyglet.text.layout import TextLayout
@@ -21,20 +21,19 @@ def event_loop(request):
 
 
 class EventLoopFixture(InteractiveFixture):
-
-    question = '\n\n(P)ass/(F)ail/(S)kip/(Q)uit?'
+    question = '\n\n(P)ass / (F)ail / (S)kip / (Q)uit?'
     key_pass = key.P
     key_fail = key.F
     key_skip = key.S
     key_quit = key.Q
     clear_color = 1, 1, 1, 1
     base_options = {
-            'width': 300,
-            'height': 300,
-            }
+        'width': 300,
+        'height': 300,
+    }
 
     def __init__(self, request):
-        super(EventLoopFixture, self).__init__(request)
+        super().__init__(request)
         self._request = request
         self.window = None
         self.text_batch = None
@@ -64,14 +63,14 @@ class EventLoopFixture(InteractiveFixture):
         assert self.window is not None
         self.text_batch = Batch()
         self.text_document = FormattedDocument()
-        layout = TextLayout(self.text_document, self.window.width, self.window.height,
-                multiline=True, wrap_lines=True, batch=self.text_batch)
-        layout.content_valign = 'bottom'
+        self.layout = TextLayout(self.text_document, width=self.window.width, height=self.window.height,
+                            multiline=True, wrap_lines=True, batch=self.text_batch)
+        self.layout.content_valign = 'bottom'
 
     def add_text(self, text):
         self.get_document()
         self.text_document.insert_text(len(self.text_document.text), text)
-        self.window._legacy_invalid = True
+        self.text_document.set_style(0, len(self.layout.document.text), {"color": (255, 255, 255, 255), "background_color": (0, 0, 0, 255)})
 
     def ask_question(self, description=None, screenshot=True):
         """Ask a question inside the test window. By default takes a screenshot and validates
@@ -120,7 +119,7 @@ class EventLoopFixture(InteractiveFixture):
     def ask_question_no_window(self, description=None):
         """Ask a question to verify the current test result. Uses the console or an external gui
         as no window is available."""
-        super(EventLoopFixture, self).ask_question(description)
+        super().ask_question(description)
 
     def run_event_loop(self, duration=None):
         if duration:
@@ -155,19 +154,18 @@ class EventLoopFixture(InteractiveFixture):
         return True
 
 
-
 def test_question_pass(event_loop):
     event_loop.create_window()
     event_loop.ask_question('If you read this text, you should let the test pass.')
+
 
 def test_question_fail(event_loop):
     event_loop.create_window()
     with pytest.raises(pytest.fail.Exception):
         event_loop.ask_question('Please press F to fail this test.')
 
+
 def test_question_skip(event_loop):
     event_loop.create_window()
     event_loop.ask_question('Please press S to skip the rest of this test.')
     pytest.fail('You should have pressed S')
-
-

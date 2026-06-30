@@ -1,58 +1,68 @@
-# ----------------------------------------------------------------------------
-# pyglet
-# Copyright (c) 2006-2008 Alex Holkner
-# All rights reserved.
-# 
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions 
-# are met:
-#
-#  * Redistributions of source code must retain the above copyright
-#    notice, this list of conditions and the following disclaimer.
-#  * Redistributions in binary form must reproduce the above copyright 
-#    notice, this list of conditions and the following disclaimer in
-#    the documentation and/or other materials provided with the
-#    distribution.
-#  * Neither the name of pyglet nor the names of its
-#    contributors may be used to endorse or promote products
-#    derived from this software without specific prior written
-#    permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-# FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-# COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-# BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-# ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-# POSSIBILITY OF SUCH DAMAGE.
-# ----------------------------------------------------------------------------
 """
 Pythonic interface to DirectSound.
 """
-from collections import namedtuple
 import ctypes
+import weakref
+from collections import namedtuple
 
-from pyglet.debug import debug_print
+from pyglet.media.exceptions import MediaException
+from pyglet.util import debug_print
 from pyglet.window.win32 import _user32
 
 from . import lib_dsound as lib
 from .exceptions import DirectSoundNativeError
 
-_debug_media = debug_print('debug_media')
+_debug = debug_print('debug_media')
+
 
 def _check(hresult):
     if hresult != lib.DS_OK:
         raise DirectSoundNativeError(hresult)
 
 
-class DirectSoundDriver(object):
+def _create_wave_format(audio_format):
+    if audio_format.channels > 2 or audio_format.sample_size not in (8, 16):
+        raise MediaException(f'Unsupported audio format: {audio_format}')
+
+    wfx = lib.WAVEFORMATEX()
+    wfx.wFormatTag = lib.WAVE_FORMAT_PCM
+    wfx.nChannels = audio_format.channels
+    wfx.nSamplesPerSec = audio_format.sample_rate
+    wfx.wBitsPerSample = audio_format.sample_size
+    wfx.nBlockAlign = wfx.wBitsPerSample * wfx.nChannels // 8
+    wfx.nAvgBytesPerSec = wfx.nSamplesPerSec * wfx.nBlockAlign
+    return wfx
+
+
+def _create_buffer_desc(wave_format, buffer_size):
+    dsbdesc = lib.DSBUFFERDESC()
+    dsbdesc.dwSize = ctypes.sizeof(dsbdesc)
+    dsbdesc.dwFlags = (lib.DSBCAPS_GLOBALFOCUS |
+                        lib.DSBCAPS_GETCURRENTPOSITION2 |
+                        lib.DSBCAPS_CTRLFREQUENCY |
+                        lib.DSBCAPS_CTRLVOLUME)
+    if wave_format.nChannels == 1:
+        dsbdesc.dwFlags |= lib.DSBCAPS_CTRL3D
+    dsbdesc.dwBufferBytes = buffer_size
+    dsbdesc.lpwfxFormat = ctypes.pointer(wave_format)
+
+    return dsbdesc
+
+
+def _create_primary_buffer_desc():
+    """Primary buffer with 3D and volume capabilities"""
+    buffer_desc = lib.DSBUFFERDESC()
+    buffer_desc.dwSize = ctypes.sizeof(buffer_desc)
+    buffer_desc.dwFlags = (lib.DSBCAPS_CTRL3D |
+                            lib.DSBCAPS_CTRLVOLUME |
+                            lib.DSBCAPS_PRIMARYBUFFER)
+
+    return buffer_desc
+
+
+class DirectSoundDriver:
     def __init__(self):
-        assert _debug_media('Constructing DirectSoundDriver')
+        assert _debug('Constructing DirectSoundDriver')
 
         self._native_dsound = lib.IDirectSound()
         _check(
@@ -67,92 +77,43 @@ class DirectSoundDriver(object):
             self._native_dsound.SetCooperativeLevel(hwnd, lib.DSSCL_NORMAL)
         )
 
-        self._buffer_factory = DirectSoundBufferFactory(self, self._native_dsound)
-        self.primary_buffer = self._buffer_factory.create_primary_buffer()
+        self.primary_buffer = self._create_primary_buffer()
 
-    def __del__(self):
-        assert _debug_media('Destroying DirectSoundDriver')
-        del self.primary_buffer
+    def delete(self):
+        self.primary_buffer.delete()
+        self.primary_buffer = None
         self._native_dsound.Release()
 
-    def create_buffer(self, audio_format):
-        return self._buffer_factory.create_buffer(audio_format)
+    def create_buffer(self, audio_format, buffer_size):
+        wave_format = _create_wave_format(audio_format)
+        buffer_desc = _create_buffer_desc(wave_format, buffer_size)
+        return DirectSoundBuffer(
+                self._create_native_buffer(buffer_desc),
+                audio_format,
+                buffer_size)
 
     def create_listener(self):
         return self.primary_buffer.create_listener()
 
-
-class DirectSoundBufferFactory(object):
-    default_buffer_size = 2.0
-
-    def __init__(self, driver, native_dsound):
-        self.driver = driver
-        self._native_dsound = native_dsound
-
-    def create_buffer(self, audio_format):
-        buffer_size = int(audio_format.sample_rate * self.default_buffer_size)
-        wave_format = self._create_wave_format(audio_format)
-        buffer_desc = self._create_buffer_desc(wave_format, buffer_size)
+    def _create_primary_buffer(self):
         return DirectSoundBuffer(
-                self.driver,
-                self._create_buffer(buffer_desc),
-                audio_format,
-                buffer_size)
-
-    def create_primary_buffer(self):
-        return DirectSoundBuffer(
-                self,
-                self._create_buffer(self._create_primary_buffer_desc()),
+                self._create_native_buffer(_create_primary_buffer_desc()),
                 None,
                 0)
 
-    def _create_buffer(self, buffer_desc):
+    def _create_native_buffer(self, buffer_desc):
         buf = lib.IDirectSoundBuffer()
         _check(
             self._native_dsound.CreateSoundBuffer(buffer_desc, ctypes.byref(buf), None)
         )
         return buf
 
-    @staticmethod
-    def _create_wave_format(audio_format):
-        wfx = lib.WAVEFORMATEX()
-        wfx.wFormatTag = lib.WAVE_FORMAT_PCM
-        wfx.nChannels = audio_format.channels
-        wfx.nSamplesPerSec = audio_format.sample_rate
-        wfx.wBitsPerSample = audio_format.sample_size
-        wfx.nBlockAlign = wfx.wBitsPerSample * wfx.nChannels // 8
-        wfx.nAvgBytesPerSec = wfx.nSamplesPerSec * wfx.nBlockAlign
-        return wfx
 
-    @classmethod
-    def _create_buffer_desc(cls, wave_format, buffer_size):
-        dsbdesc = lib.DSBUFFERDESC()
-        dsbdesc.dwSize = ctypes.sizeof(dsbdesc)
-        dsbdesc.dwFlags = (lib.DSBCAPS_GLOBALFOCUS |
-                           lib.DSBCAPS_GETCURRENTPOSITION2 |
-                           lib.DSBCAPS_CTRLFREQUENCY |
-                           lib.DSBCAPS_CTRLVOLUME)
-        if wave_format.nChannels == 1:
-            dsbdesc.dwFlags |= lib.DSBCAPS_CTRL3D
-        dsbdesc.dwBufferBytes = buffer_size
-        dsbdesc.lpwfxFormat = ctypes.pointer(wave_format)
+_CurrentPosition = namedtuple('_CurrentPosition', ['play_cursor', 'write_cursor'])
 
-        return dsbdesc
 
-    @classmethod
-    def _create_primary_buffer_desc(cls):
-        """Primary buffer with 3D and volume capabilities"""
-        buffer_desc = lib.DSBUFFERDESC()
-        buffer_desc.dwSize = ctypes.sizeof(buffer_desc)
-        buffer_desc.dwFlags = (lib.DSBCAPS_CTRL3D |
-                               lib.DSBCAPS_CTRLVOLUME |
-                               lib.DSBCAPS_PRIMARYBUFFER)
-
-        return buffer_desc
-
-class DirectSoundBuffer(object):
-    def __init__(self, driver, native_buffer, audio_format, buffer_size):
-        self.driver = driver
+class DirectSoundBuffer:
+    def __init__(self, native_buffer, audio_format, buffer_size):
         self.audio_format = audio_format
         self.buffer_size = buffer_size
 
@@ -165,7 +126,7 @@ class DirectSoundBuffer(object):
         else:
             self._native_buffer3d = None
 
-    def __del__(self):
+    def delete(self):
         if self._native_buffer is not None:
             self._native_buffer.Stop()
             self._native_buffer.Release()
@@ -188,8 +149,6 @@ class DirectSoundBuffer(object):
             self._native_buffer.SetVolume(value)
         )
 
-    _CurrentPosition = namedtuple('_CurrentPosition', ['play_cursor', 'write_cursor'])
-
     @property
     def current_position(self):
         """Tuple of current play position and current write position.
@@ -200,7 +159,7 @@ class DirectSoundBuffer(object):
             self._native_buffer.GetCurrentPosition(play_cursor,
                                                    write_cursor)
         )
-        return self._CurrentPosition(play_cursor.value, write_cursor.value)
+        return _CurrentPosition(play_cursor.value, write_cursor.value)
 
     @current_position.setter
     def current_position(self, value):
@@ -365,7 +324,7 @@ class DirectSoundBuffer(object):
         native_listener = lib.IDirectSound3DListener()
         self._native_buffer.QueryInterface(lib.IID_IDirectSound3DListener,
                                            ctypes.byref(native_listener))
-        return DirectSoundListener(self, native_listener)
+        return DirectSoundListener(native_listener)
 
     def play(self):
         _check(
@@ -377,7 +336,7 @@ class DirectSoundBuffer(object):
             self._native_buffer.Stop()
         )
 
-    class _WritePointer(object):
+    class _WritePointer:
         def __init__(self):
             self.audio_ptr_1 = ctypes.c_void_p()
             self.audio_length_1 = lib.DWORD()
@@ -385,15 +344,15 @@ class DirectSoundBuffer(object):
             self.audio_length_2 = lib.DWORD()
 
     def lock(self, write_cursor, write_size):
-        assert _debug_media('DirectSoundBuffer.lock({}, {})'.format(write_cursor, write_size))
+        assert _debug('DirectSoundBuffer.lock({}, {})'.format(write_cursor, write_size))
         pointer = self._WritePointer()
         _check(
             self._native_buffer.Lock(write_cursor,
                                      write_size,
                                      ctypes.byref(pointer.audio_ptr_1),
-                                     pointer.audio_length_1,
+                                     ctypes.byref(pointer.audio_length_1),
                                      ctypes.byref(pointer.audio_ptr_2),
-                                     pointer.audio_length_2,
+                                     ctypes.byref(pointer.audio_length_2),
                                      0)
         )
         return pointer
@@ -407,13 +366,14 @@ class DirectSoundBuffer(object):
         )
 
 
-class DirectSoundListener(object):
-    def __init__(self, ds_buffer, native_listener):
-        self.ds_buffer = ds_buffer
+class DirectSoundListener:
+    def __init__(self, native_listener):
         self._native_listener = native_listener
 
-    def __del__(self):
-        self._native_listener.Release()
+    def delete(self):
+        if self._native_listener:
+            self._native_listener.Release()
+            self._native_listener = None
 
     @property
     def position(self):
@@ -421,7 +381,7 @@ class DirectSoundListener(object):
         _check(
             self._native_listener.GetPosition(ctypes.byref(vector))
         )
-        return (vector.x, vector.y, vector.z)
+        return vector.x, vector.y, vector.z
 
     @position.setter
     def position(self, value):
@@ -436,12 +396,10 @@ class DirectSoundListener(object):
         _check(
             self._native_listener.GetOrientation(ctypes.byref(front), ctypes.byref(top))
         )
-        return (front.x, front.y, front.z, top.x, top.y, top.z)
+        return front.x, front.y, front.z, top.x, top.y, top.z
 
     @orientation.setter
     def orientation(self, orientation):
         _check(
             self._native_listener.SetOrientation(*(list(orientation) + [lib.DS3D_IMMEDIATE]))
         )
-
-

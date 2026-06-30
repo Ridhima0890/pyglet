@@ -1,5 +1,0 @@
-pyglet
-======
-
-.. automodule:: pyglet
-  :members:

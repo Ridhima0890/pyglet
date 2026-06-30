@@ -1,54 +1,33 @@
-# ----------------------------------------------------------------------------
-# pyglet
-# Copyright (c) 2006-2008 Alex Holkner
-# All rights reserved.
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions
-# are met:
-#
-#  * Redistributions of source code must retain the above copyright
-#    notice, this list of conditions and the following disclaimer.
-#  * Redistributions in binary form must reproduce the above copyright
-#    notice, this list of conditions and the following disclaimer in
-#    the documentation and/or other materials provided with the
-#    distribution.
-#  * Neither the name of pyglet nor the names of its
-#    contributors may be used to endorse or promote products
-#    derived from this software without specific prior written
-#    permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-# FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-# COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-# BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-# ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-# POSSIBILITY OF SUCH DAMAGE.
-# ----------------------------------------------------------------------------
+"""Macintosh key scancode constants.
 
-'''
-'''
+For a quick visual reference, see Inside Macintosh's keycode diagram:
+http://boredzo.org/blog/wp-content/uploads/2007/05/imtx-virtual-keycodes.png
 
-__docformat__ = 'restructuredtext'
-__version__ = ''
+For clarity, a few constants use custom pyglet-specific names.
+These include:
+================ ======================
+New pyglet name  Name in referenced .h
+================ ======================
+QZ_LCOMMAND      QZ_LMETA
+QZ_LOPTION       QZ_LALT
+QZ_ROPTION       QZ_RALT
+QZ_RCOMMAND      QZ_RMETA
 
+This module was originally created by consulting a 2006 version of
+SDL 1.X's SDL_Quartzkeys.h. Although some names are pyglet-specific,
+all values are the same as those in Mac OS X 10.6's Events.h.
+
+To learn more, please see:
+
+* SDL 1.2's SDL_Quartzkeys.h https://github.com/libsdl-org/SDL-1.2/blob/main/src/video/quartz/SDL_QuartzKeys.h
+* Event.h from Mac OS X 10.6 https://github.com/phracker/MacOSX-SDKs/blob/master/MacOSX10.6.sdk/System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/Headers/Events.h
+
+"""
 from pyglet.window import key
 
-# From SDL: src/video/quartz/SDL_QuartzKeys.h
-# These are the Macintosh key scancode constants -- from Inside Macintosh
-# http://boredzo.org/blog/wp-content/uploads/2007/05/imtx-virtual-keycodes.png
-# Renamed QZ_RALT, QZ_LALT to QZ_ROPTION, QZ_LOPTION
-# and QZ_RMETA, QZ_LMETA to QZ_RCOMMAND, QZ_LCOMMAND.
-#
-# See also:
-# /System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Headers/Events.h
-
+# These values and most of their names are taken from SDL 1.X's
+# SQL_Quartzkeys.h. Changed names are listed in the top-level
+# docstring and marked with comments below.
 QZ_ESCAPE = 0x35
 QZ_F1 = 0x7A
 QZ_F2 = 0x78
@@ -147,11 +126,11 @@ QZ_KP2 = 0x54
 QZ_KP3 = 0x55
 QZ_KP_ENTER = 0x4C
 QZ_LCTRL = 0x3B
-QZ_LOPTION = 0x3A
-QZ_LCOMMAND = 0x37
+QZ_LOPTION = 0x3A  # Originally QZ_LMETA
+QZ_LCOMMAND = 0x37  # Originally QZ_LALT
 QZ_SPACE = 0x31
-QZ_RCOMMAND = 0x36
-QZ_ROPTION = 0x3D
+QZ_RCOMMAND = 0x36  # Originally QZ_RALT
+QZ_ROPTION = 0x3D  # Originally QZ_RMETA
 QZ_RCTRL = 0x3E
 QZ_FUNCTION = 0x3F
 QZ_LEFT = 0x7B
@@ -229,77 +208,74 @@ keymap = {
     QZ_KP_PERIOD: key.NUM_DECIMAL,
 }
 
-
 charmap = {
-    ' ' : key.SPACE,
-    '!' : key.EXCLAMATION,
-    '"' : key.DOUBLEQUOTE,
-    '#' : key.HASH,
-    '#' : key.POUND,
-    '$' : key.DOLLAR,
-    '%' : key.PERCENT,
-    '&' : key.AMPERSAND,
-    "'" : key.APOSTROPHE,
-    '(' : key.PARENLEFT,
-    ')' : key.PARENRIGHT,
-    '*' : key.ASTERISK,
-    '+' : key.PLUS,
-    ',' : key.COMMA,
-    '-' : key.MINUS,
-    '.' : key.PERIOD,
-    '/' : key.SLASH,
-    '0' : key._0,
-    '1' : key._1,
-    '2' : key._2,
-    '3' : key._3,
-    '4' : key._4,
-    '5' : key._5,
-    '6' : key._6,
-    '7' : key._7,
-    '8' : key._8,
-    '9' : key._9,
-    ':' : key.COLON,
-    ';' : key.SEMICOLON,
-    '<' : key.LESS,
-    '=' : key.EQUAL,
-    '>' : key.GREATER,
-    '?' : key.QUESTION,
-    '@' : key.AT,
-    '[' : key.BRACKETLEFT,
-    '\\' : key.BACKSLASH,
-    ']' : key.BRACKETRIGHT,
-    '^' : key.ASCIICIRCUM,
-    '_' : key.UNDERSCORE,
-    '`' : key.GRAVE,
-    '`' : key.QUOTELEFT,
-    'A' : key.A,
-    'B' : key.B,
-    'C' : key.C,
-    'D' : key.D,
-    'E' : key.E,
-    'F' : key.F,
-    'G' : key.G,
-    'H' : key.H,
-    'I' : key.I,
-    'J' : key.J,
-    'K' : key.K,
-    'L' : key.L,
-    'M' : key.M,
-    'N' : key.N,
-    'O' : key.O,
-    'P' : key.P,
-    'Q' : key.Q,
-    'R' : key.R,
-    'S' : key.S,
-    'T' : key.T,
-    'U' : key.U,
-    'V' : key.V,
-    'W' : key.W,
-    'X' : key.X,
-    'Y' : key.Y,
-    'Z' : key.Z,
-    '{' : key.BRACELEFT,
-    '|' : key.BAR,
-    '}' : key.BRACERIGHT,
-    '~' : key.ASCIITILDE
+    ' ': key.SPACE,
+    '!': key.EXCLAMATION,
+    '"': key.DOUBLEQUOTE,
+    '#': key.HASH,
+    '$': key.DOLLAR,
+    '%': key.PERCENT,
+    '&': key.AMPERSAND,
+    "'": key.APOSTROPHE,
+    '(': key.PARENLEFT,
+    ')': key.PARENRIGHT,
+    '*': key.ASTERISK,
+    '+': key.PLUS,
+    ',': key.COMMA,
+    '-': key.MINUS,
+    '.': key.PERIOD,
+    '/': key.SLASH,
+    '0': key._0,
+    '1': key._1,
+    '2': key._2,
+    '3': key._3,
+    '4': key._4,
+    '5': key._5,
+    '6': key._6,
+    '7': key._7,
+    '8': key._8,
+    '9': key._9,
+    ':': key.COLON,
+    ';': key.SEMICOLON,
+    '<': key.LESS,
+    '=': key.EQUAL,
+    '>': key.GREATER,
+    '?': key.QUESTION,
+    '@': key.AT,
+    '[': key.BRACKETLEFT,
+    '\\': key.BACKSLASH,
+    ']': key.BRACKETRIGHT,
+    '^': key.ASCIICIRCUM,
+    '_': key.UNDERSCORE,
+    '`': key.QUOTELEFT,
+    'A': key.A,
+    'B': key.B,
+    'C': key.C,
+    'D': key.D,
+    'E': key.E,
+    'F': key.F,
+    'G': key.G,
+    'H': key.H,
+    'I': key.I,
+    'J': key.J,
+    'K': key.K,
+    'L': key.L,
+    'M': key.M,
+    'N': key.N,
+    'O': key.O,
+    'P': key.P,
+    'Q': key.Q,
+    'R': key.R,
+    'S': key.S,
+    'T': key.T,
+    'U': key.U,
+    'V': key.V,
+    'W': key.W,
+    'X': key.X,
+    'Y': key.Y,
+    'Z': key.Z,
+    '{': key.BRACELEFT,
+    '|': key.BAR,
+    '}': key.BRACERIGHT,
+    '~': key.ASCIITILDE,
 }

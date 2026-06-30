@@ -1,39 +1,4 @@
-# ----------------------------------------------------------------------------
-# pyglet
-# Copyright (c) 2006-2008 Alex Holkner
-# All rights reserved.
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions
-# are met:
-#
-#  * Redistributions of source code must retain the above copyright
-#    notice, this list of conditions and the following disclaimer.
-#  * Redistributions in binary form must reproduce the above copyright
-#    notice, this list of conditions and the following disclaimer in
-#    the documentation and/or other materials provided with the
-#    distribution.
-#  * Neither the name of pyglet nor the names of its
-#    contributors may be used to endorse or promote products
-#    derived from this software without specific prior written
-#    permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-# FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-# COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-# BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-# ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-# POSSIBILITY OF SUCH DAMAGE.
-# ----------------------------------------------------------------------------
-# $Id:$
-
-'''Manage related vertex attributes within a single vertex domain.
+"""Manage related vertex attributes within a single vertex domain.
 
 A vertex "domain" consists of a set of attribute descriptions that together
 describe the layout of one or more vertex buffers which are used together to
@@ -54,33 +19,28 @@ to the underlying buffers automatically.
 The entire domain can be efficiently drawn in one step with the
 :py:meth:`VertexDomain.draw` method, assuming all the vertices comprise
 primitives of the same OpenGL primitive mode.
-'''
-from builtins import zip
-from builtins import range
-from builtins import object
+"""
+from __future__ import annotations
 
-__docformat__ = 'restructuredtext'
-__version__ = '$Id: $'
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any, Sequence, Protocol, Iterable, NoReturn
 
-import ctypes
-import re
+import pyglet
+from pyglet.graphics import allocation
+from pyglet.graphics.shader import Attribute, AttributeView, GraphicsAttribute, DataTypeTuple
+from pyglet.graphics.draw import DrawContext, BatchDrawOptions
 
-from pyglet.gl import *
-from pyglet.graphics import allocation, vertexattribute, vertexbuffer
+if TYPE_CHECKING:
+    from ctypes import Array
+    from pyglet.customtypes import DataTypes
+    from pyglet.graphics.api.base import SurfaceContext
+    from pyglet.graphics.instance import InstanceBucket, VertexInstance, InstanceDomain
+    from pyglet.graphics.buffer import AttributeBufferObject, IndexedBufferObject
+    from pyglet.graphics import Group
+    from pyglet.enums import GeometryMode
 
-_usage_format_re = re.compile(r'''
-    (?P<attribute>[^/]*)
-    (/ (?P<usage> static|dynamic|stream|none))?
-''', re.VERBOSE)
 
-_gl_usages = {
-    'static': GL_STATIC_DRAW,
-    'dynamic': GL_DYNAMIC_DRAW,
-    'stream': GL_STREAM_DRAW,
-    'none': GL_STREAM_DRAW_ARB, # Force no VBO
-}
-
-def _nearest_pow2(v):
+def _nearest_pow2(v: int) -> int:
     # From http://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
     # Credit: Sean Anderson
     v -= 1
@@ -91,789 +51,1115 @@ def _nearest_pow2(v):
     v |= v >> 16
     return v + 1
 
-def create_attribute_usage(format):
-    '''Create an attribute and usage pair from a format string.  The
-    format string is as documented in `pyglet.graphics.vertexattribute`, with
-    the addition of an optional usage component::
 
-        usage ::= attribute ( '/' ('static' | 'dynamic' | 'stream' | 'none') )?
+def _make_attribute_property(name: str) -> property:
+    def _attribute_getter(self: VertexList) -> Array[float | int]:
+        stream = self.domain.attrib_name_buffers[name]
+        region = stream.get_attribute_region(name, self.start, self.count)
+        stream.invalidate_attribute_region(name, self.start, self.count)
+        return region
 
-    If the usage is not given it defaults to 'dynamic'.  The usage corresponds
-    to the OpenGL VBO usage hint, and for ``static`` also indicates a
-    preference for interleaved arrays.  If ``none`` is specified a buffer
-    object is not created, and vertex data is stored in system memory.
+    def _attribute_setter(self: VertexList, data: Any) -> None:
+        stream = self.domain.attrib_name_buffers[name]
+        stream.set_attribute_region(name, self.start, self.count, data)
 
-    Some examples:
+    return property(_attribute_getter, _attribute_setter)
 
-    ``v3f/stream``
-        3D vertex position using floats, for stream usage
-    ``c4b/static``
-        4-byte color attribute, for static usage
 
-    :return: attribute, usage
-    '''
-    match = _usage_format_re.match(format)
-    attribute_format = match.group('attribute')
-    attribute = vertexattribute.create_attribute(attribute_format)
-    usage = match.group('usage')
-    if usage:
-        vbo = not usage == 'none'
-        usage = _gl_usages[usage]
-    else:
-        usage = GL_DYNAMIC_DRAW
-        vbo = True
+class VertexList:
+    """A list of vertices within a :py:class:`VertexDomain`.
 
-    return (attribute, usage, vbo)
+    Use :py:meth:`VertexDomain.create` to construct this list.
+    """
+    count: int
+    start: int
+    domain: VertexDomain
+    indexed: bool = False
+    instanced: bool = False
+    initial_attribs: dict
 
-def create_domain(*attribute_usage_formats):
-    '''Create a vertex domain covering the given attribute usage formats.
-    See documentation for :py:func:`create_attribute_usage` and
-    :py:func:`pyglet.graphics.vertexattribute.create_attribute` for the grammar
-    of these format strings.
-
-    :rtype: :py:class:`VertexDomain`
-    '''
-    attribute_usages = [create_attribute_usage(f) \
-                        for f in attribute_usage_formats]
-    return VertexDomain(attribute_usages)
-
-def create_indexed_domain(*attribute_usage_formats):
-    '''Create an indexed vertex domain covering the given attribute usage
-    formats.  See documentation for :py:class:`create_attribute_usage` and
-    :py:func:`pyglet.graphics.vertexattribute.create_attribute` for the grammar
-    of these format strings.
-
-    :rtype: :py:class:`VertexDomain`
-    '''
-    attribute_usages = [create_attribute_usage(f) \
-                        for f in attribute_usage_formats]
-    return IndexedVertexDomain(attribute_usages)
-
-class VertexDomain(object):
-    '''Management of a set of vertex lists.
-
-    Construction of a vertex domain is usually done with the
-    :py:func:`create_domain` function.
-    '''
-    _version = 0
-    _initial_count = 16
-
-    def __init__(self, attribute_usages):
-        self.allocator = allocation.Allocator(self._initial_count)
-
-        # If there are any MultiTexCoord attributes, then a TexCoord attribute
-        # must be converted.
-        have_multi_texcoord = False
-        for attribute, _, _ in attribute_usages:
-            if isinstance(attribute, vertexattribute.MultiTexCoordAttribute):
-                have_multi_texcoord = True
-                break
-
-        static_attributes = []
-        attributes = []
-        self.buffer_attributes = []   # list of (buffer, attributes)
-        for attribute, usage, vbo in attribute_usages:
-            if (have_multi_texcoord and
-                isinstance(attribute, vertexattribute.TexCoordAttribute)):
-                attribute.convert_to_multi_tex_coord_attribute()
-
-            if usage == GL_STATIC_DRAW:
-                # Group attributes for interleaved buffer
-                static_attributes.append(attribute)
-                attributes.append(attribute)
-            else:
-                # Create non-interleaved buffer
-                attributes.append(attribute)
-                attribute.buffer = vertexbuffer.create_mappable_buffer(
-                    attribute.stride * self.allocator.capacity,
-                    usage=usage, vbo=vbo)
-                attribute.buffer.element_size = attribute.stride
-                attribute.buffer.attributes = (attribute,)
-                self.buffer_attributes.append(
-                    (attribute.buffer, (attribute,)))
-
-        # Create buffer for interleaved data
-        if static_attributes:
-            vertexattribute.interleave_attributes(static_attributes)
-            stride = static_attributes[0].stride
-            buffer = vertexbuffer.create_mappable_buffer(
-                stride * self.allocator.capacity, usage=GL_STATIC_DRAW)
-            buffer.element_size = stride
-            self.buffer_attributes.append(
-                (buffer, static_attributes))
-
-            attributes.extend(static_attributes)
-            for attribute in static_attributes:
-                attribute.buffer = buffer
-
-        # Create named attributes for each attribute
-        self.attributes = attributes
-        self.attribute_names = {}
-        for attribute in attributes:
-            if isinstance(attribute, vertexattribute.GenericAttribute):
-                index = attribute.index
-                # TODO create a name and use it (e.g. 'generic3')
-                # XXX this won't migrate; not documented.
-                if 'generic' not in self.attribute_names:
-                    self.attribute_names['generic'] = {}
-                assert index not in self.attribute_names['generic'], \
-                    'More than one generic attribute with index %d' % index
-                self.attribute_names['generic'][index] = attribute
-            elif isinstance(attribute, vertexattribute.MultiTexCoordAttribute):
-                # XXX this won't migrate; not documented.
-                texture = attribute.texture
-                if 'multi_tex_coords' not in self.attribute_names:
-                    self.attribute_names['multi_tex_coords'] = []
-                assert texture not in self.attribute_names['multi_tex_coords'],\
-                    'More than one multi_tex_coord attribute for texture %d' % \
-                        texture
-                self.attribute_names['multi_tex_coords'].insert(texture,attribute)
-            else:
-                name = attribute.plural
-                assert name not in self.attributes, \
-                    'More than one "%s" attribute given' % name
-                self.attribute_names[name] = attribute
-
-    def __del__(self):
-        # Break circular refs that Python GC seems to miss even when forced
-        # collection.
-        for attribute in self.attributes:
-            try:
-                del attribute.buffer
-            except AttributeError:
-                pass
-
-    def _safe_alloc(self, count):
-        '''Allocate vertices, resizing the buffers if necessary.'''
-        try:
-            return self.allocator.alloc(count)
-        except allocation.AllocatorMemoryException as e:
-            capacity = _nearest_pow2(e.requested_capacity)
-            self._version += 1
-            for buffer, _ in self.buffer_attributes:
-                buffer.resize(capacity * buffer.element_size)
-            self.allocator.set_capacity(capacity)
-            return self.allocator.alloc(count)
-
-    def _safe_realloc(self, start, count, new_count):
-        '''Reallocate vertices, resizing the buffers if necessary.'''
-        try:
-            return self.allocator.realloc(start, count, new_count)
-        except allocation.AllocatorMemoryException as e:
-            capacity = _nearest_pow2(e.requested_capacity)
-            self._version += 1
-            for buffer, _ in self.buffer_attributes:
-                buffer.resize(capacity * buffer.element_size)
-            self.allocator.set_capacity(capacity)
-            return self.allocator.realloc(start, count, new_count)
-
-    def create(self, count):
-        '''Create a :py:class:`VertexList` in this domain.
-
-        :Parameters:
-            `count` : int
-                Number of vertices to create.
-
-        :rtype: :py:class:`VertexList`
-        '''
-        start = self._safe_alloc(count)
-        return VertexList(self, start, count)
-
-    def draw(self, mode, vertex_list=None):
-        '''Draw vertices in the domain.
-
-        If `vertex_list` is not specified, all vertices in the domain are
-        drawn.  This is the most efficient way to render primitives.
-
-        If `vertex_list` specifies a :py:class:`VertexList`, only primitives in
-        that list will be drawn.
-
-        :Parameters:
-            `mode` : int
-                OpenGL drawing mode, e.g. ``GL_POINTS``, ``GL_LINES``, etc.
-            `vertex_list` : `~pyglet.graphics.vertexdomain.VertexList`
-                Vertex list to draw, or ``None`` for all lists in this domain.
-
-        '''
-        glPushClientAttrib(GL_CLIENT_VERTEX_ARRAY_BIT)
-        for buffer, attributes in self.buffer_attributes:
-            buffer.bind()
-            for attribute in attributes:
-                attribute.enable()
-                attribute.set_pointer(attribute.buffer.ptr)
-        if vertexbuffer._workaround_vbo_finish:
-            glFinish()
-
-        if vertex_list is not None:
-            glDrawArrays(mode, vertex_list.start, vertex_list.count)
-        else:
-            starts, sizes = self.allocator.get_allocated_regions()
-            primcount = len(starts)
-            if primcount == 0:
-                pass
-            elif primcount == 1:
-                # Common case
-                glDrawArrays(mode, starts[0], sizes[0])
-            elif gl_info.have_version(1, 4):
-                starts = (GLint * primcount)(*starts)
-                sizes = (GLsizei * primcount)(*sizes)
-                glMultiDrawArrays(mode, starts, sizes, primcount)
-            else:
-                for start, size in zip(starts, sizes):
-                    glDrawArrays(mode, start, size)
-
-        for buffer, _ in self.buffer_attributes:
-            buffer.unbind()
-        glPopClientAttrib()
-
-    def _is_empty(self):
-        return not self.allocator.starts
-
-    def __repr__(self):
-        return '<%s@%x %s>' % (self.__class__.__name__, id(self),
-                               self.allocator)
-
-class VertexList(object):
-    '''A list of vertices within a :py:class:`VertexDomain`.  Use
-    :py:meth:`VertexDomain.create` to construct this list.
-    '''
-
-    def __init__(self, domain, start, count):
-        # TODO make private
+    def __init__(self, domain: VertexDomain, group: Group, start: int, count: int) -> None:  # noqa: D107
         self.domain = domain
+        self.group = group
         self.start = start
         self.count = count
+        self.initial_attribs = domain.attribute_meta
+        self.bucket = None
 
-    def get_size(self):
-        '''Get the number of vertices in the list.
+    def draw(self, mode: GeometryMode) -> None:
+        """Draw this vertex list in the given OpenGL mode.
 
-        :rtype: int
-        '''
-        return self.count
-
-    def get_domain(self):
-        '''Get the domain this vertex list belongs to.
-
-        :rtype: :py:class:`VertexDomain`
-        '''
-        return self.domain
-
-    def draw(self, mode):
-        '''Draw this vertex list in the given OpenGL mode.
-
-        :Parameters:
-            `mode` : int
+        Args:
+            mode:
                 OpenGL drawing mode, e.g. ``GL_POINTS``, ``GL_LINES``, etc.
+        """
+        draw_ctx = DrawContext(
+            surface_ctx=self.domain._context,
+            backend_ctx=None,
+            draw_pass=BatchDrawOptions().resolve(self.domain._context),
+            renderer=self.domain._context.renderer,
+        )
+        draw_ctx.begin()
+        self.group.set_state_recursive(draw_ctx)  # noqa: SLF001
+        self.domain.draw_subset(mode, self)
+        self.group.unset_state_recursive(draw_ctx)  # noqa: SLF001
 
-        '''
-        self.domain.draw(mode, self)
+    def resize(self, count: int, index_count: int | None = None) -> None:  # noqa: ARG002
+        """Resize this group.
 
-    def resize(self, count):
-        '''Resize this group.
-
-        :Parameters:
-            `count` : int
+        Args:
+            count:
                 New number of vertices in the list.
+            index_count:
+                Ignored for non indexed VertexDomains
 
-        '''
-        new_start = self.domain._safe_realloc(self.start, self.count, count)
+        """
+        new_start = self.domain.safe_realloc(self.start, self.count, count)
         if new_start != self.start:
             # Copy contents to new location
-            for attribute in self.domain.attributes:
-                old = attribute.get_region(attribute.buffer,
-                                           self.start, self.count)
-                new = attribute.get_region(attribute.buffer,
-                                           new_start, self.count)
-                new.array[:] = old.array[:]
-                new.invalidate()
+            for buffer in self.domain.attrib_name_buffers.values():
+                old_data = buffer.get_region(self.start, self.count)
+                buffer.set_region(new_start, self.count, old_data)
         self.start = new_start
         self.count = count
 
-        self._colors_cache_version = None
-        self._fog_coords_cache_version = None
-        self._edge_flags_cache_version = None
-        self._normals_cache_version = None
-        self._secondary_colors_cache_version = None
-        self._tex_coords_cache_version = None
-        self._vertices_cache_version = None
+    def delete(self) -> None:
+        """Delete this group."""
+        self.domain.vertex_buffers.allocator.dealloc(self.start, self.count)
+        self.domain.dealloc_from_group(self)
 
-    def delete(self):
-        '''Delete this group.'''
-        self.domain.allocator.dealloc(self.start, self.count)
+    def migrate(self, domain: VertexDomain, group: Group) -> None:
+        """Move this group from its current domain and add to the specified one.
 
-    def migrate(self, domain):
-        '''Move this group from its current domain and add to the specified
-        one.  Attributes on domains must match.  (In practice, used to change
-        parent state of some vertices).
+        Attributes on domains must match.
+        (In practice, used to change parent state of some vertices).
 
-        :Parameters:
-            `domain` : `VertexDomain`
+        Args:
+            domain:
                 Domain to migrate this vertex list to.
+            group:
+                The group this vertex list belongs to.
+        """
+        assert list(domain.attribute_names.keys()) == list(self.domain.attribute_names.keys()), (
+            'Domain attributes must match.'
+        )
 
-        '''
-        assert list(domain.attribute_names.keys()) == \
-            list(self.domain.attribute_names.keys()), 'Domain attributes must match.'
-
-        new_start = domain._safe_alloc(self.count)
-        for key, old_attribute in self.domain.attribute_names.items():
-            old = old_attribute.get_region(old_attribute.buffer,
-                                           self.start, self.count)
-            new_attribute = domain.attribute_names[key]
-            new = new_attribute.get_region(new_attribute.buffer,
-                                           new_start, self.count)
-            new.array[:] = old.array[:]
-            new.invalidate()
-
-        self.domain.allocator.dealloc(self.start, self.count)
+        new_start = domain.safe_alloc(self.count)
+        # Copy data to new stream.
+        self.domain.dealloc_from_group(self)
+        self.domain.vertex_buffers.copy_data(new_start, domain.vertex_buffers, self.start, self.count)
+        self.domain.vertex_buffers.allocator.dealloc(self.start, self.count)
         self.domain = domain
+        self.group = group
+        self.start = new_start
+        domain.alloc_to_group(self, group)
+        assert self.bucket is not None
+
+    def update_group(self, group: Group) -> None:
+        current_bucket = self.bucket
+        self.domain.dealloc_from_group(self)
+        self.group = group
+        new_bucket = self.domain.alloc_to_group(self, group)
+        assert new_bucket != current_bucket, "Changing group resulted in the same bucket."
+
+    def set_attribute_data(self, name: str, data: Any) -> None:
+        stream = self.domain.attrib_name_buffers[name]
+        buffer = stream.attrib_name_buffers[name]
+
+        try:
+            buffer.set_region(self.start, self.count, data)
+        except ValueError:
+            msg = f"Invalid data size for '{name}'. Expected {buffer.element_count * self.count}, got {len(data)}."
+            raise ValueError(msg) from None
+
+
+class InstanceVertexList(VertexList):
+    """A list of vertices within an :py:class:`InstancedVertexDomain` that are not indexed."""
+    domain: InstancedVertexDomain
+    instanced: bool = True
+
+    def __init__(self, domain: VertexDomain, group: Group, start: int, count: int, bucket: InstanceBucket) -> None:  # noqa: D107
+        super().__init__(domain, group, start, count)
+        self.instance_bucket = bucket
+
+    def create_instance(self, **attributes: Any) -> VertexInstance:
+        return self.instance_bucket.create_instance(**attributes)
+
+    @property
+    def instance_count(self) -> int:
+        """Number of active instances in this vertex list."""
+        return self.instance_bucket.instance_count
+
+    def get_instance_by_index(self, index: int) -> VertexInstance | None:
+        """Get an instance by its current slot index."""
+        return self.instance_bucket.get_instance_by_index(index)
+
+    def get_instance_index(self, instance: VertexInstance) -> int | None:
+        """Get the current slot index for an instance."""
+        return self.instance_bucket.get_instance_index(instance)
+
+    def swap_instances(self, first: VertexInstance, second: VertexInstance) -> None:
+        """Swap two instances in-place.
+
+        Useful when changing draw order without rebuilding all instance data.
+        This can still be expensive if instance attributes are large.
+        """
+        self.instance_bucket.swap_instances(first, second)
+
+    def move_instance_to_index(self, instance: VertexInstance, index: int) -> None:
+        """Move one instance to a target slot index.
+
+        Other instances shift as needed to keep slots contiguous.
+        This may be expensive when moving across many slots.
+        """
+        self.instance_bucket.move_instance_to_index(instance, index)
+
+    def set_instance_order(self, order: Sequence[VertexInstance]) -> None:
+        """Set the exact full order of all active instances.
+
+        This can be expensive for large lists.
+        """
+        self.instance_bucket.set_instance_order(order)
+
+    def move_to_back(self, instances: Sequence[VertexInstance]) -> None:
+        """Move a subset of instances to the back in the given order.
+
+        Back means lower indices (drawn earlier). Unspecified instances remain
+        after the moved prefix. This can be expensive for large lists.
+        """
+        self.instance_bucket.move_to_back(instances)
+
+    def move_to_top(self, instances: Sequence[VertexInstance]) -> None:
+        """Move a subset of instances to the top in the given order.
+
+        Top means higher indices (drawn later). Unspecified instances remain
+        before the moved suffix. This can be expensive for large lists.
+        """
+        self.instance_bucket.move_to_top(instances)
+
+    def set_attribute_data(self, name: str, data: Any) -> None:
+        if self.initial_attribs[name].fmt.is_instanced:
+            stream = self.instance_bucket.stream
+            count = 1
+            start = 0
+        else:
+            stream = self.domain.attrib_name_buffers[name]
+            count = self.count
+            start = self.start
+        buffer = stream.attrib_name_buffers[name]
+
+        try:
+            buffer.set_region(start, count, data)
+        except ValueError:
+            msg = f"Invalid data size for '{buffer}'. Expected {buffer.element_count * count}, got {len(data)}."
+            raise ValueError(msg) from None
+
+
+class _IndexSupport:
+    domain: IndexedVertexDomain | InstancedIndexedVertexDomain
+    start: int
+    count: int
+    bucket: None
+
+    def migrate(self, domain: IndexedVertexDomain | InstancedIndexedVertexDomain, group: Group):
+        self.domain.dealloc_from_group(self)
+        new_start = domain.safe_alloc(self.count)
+        # Copy data to new stream.
+        self.domain.vertex_buffers.copy_data(new_start, domain.vertex_buffers, self.start, self.count)
+        self.domain.vertex_buffers.allocator.dealloc(self.start, self.count)
+        self.domain = domain
+        self.group = group
         self.start = new_start
 
-        self._colors_cache_version = None
-        self._fog_coords_cache_version = None
-        self._edge_flags_cache_version = None
-        self._normals_cache_version = None
-        self._secondary_colors_cache_version = None
-        self._tex_coords_cache_version = None
-        self._vertices_cache_version = None
+class _LocalIndexSupport(_IndexSupport):
+    """When BaseVertex is supported by the version, this class will be mixed in.
 
-    def _set_attribute_data(self, i, data):
-        attribute = self.domain.attributes[i]
-        # TODO without region
-        region = attribute.get_region(attribute.buffer, self.start, self.count)
-        region.array[:] = data
-        region.invalidate()
+    Will allow the class to use local index values instead of incrementing each mesh.
+    """
+    __slots__: tuple[str, ...] = ()
 
-    # ---
+    supports_base_vertex: bool = True
 
-    def _get_colors(self):
-        if (self._colors_cache_version != self.domain._version):
-            domain = self.domain
-            attribute = domain.attribute_names['colors']
-            self._colors_cache = attribute.get_region(
-                attribute.buffer, self.start, self.count)
-            self._colors_cache_version = domain._version
+    domain: IndexedVertexDomain | InstancedIndexedVertexDomain
+    index_count: int
+    index_start: int
+    index_type: DataTypes
 
-        region = self._colors_cache
-        region.invalidate()
-        return region.array
+    @property
+    def indices(self) -> list[int]:
+        return self.domain.index_stream.get_region(self.index_start, self.index_count)[:]
 
-    def _set_colors(self, data):
-        self._get_colors()[:] = data
+    @indices.setter
+    def indices(self, local: Sequence[int]) -> None:  # type: ignore[override]
+        self.domain.index_stream.set_region(self.index_start, self.index_count, local)
 
-    _colors_cache = None
-    _colors_cache_version = None
-    colors = property(_get_colors, _set_colors,
-                      doc='''Array of color data.''')
+    def migrate(self, domain: IndexedVertexDomain | InstancedIndexedVertexDomain, group: Group) -> None:  # type: ignore[override]
+        old_dom = self.domain
+        src_idx_start = self.index_start
+        src_idx_count = self.index_count
 
-    # ---
+        super().migrate(domain, group)
 
-    def _get_fog_coords(self):
-        if (self._fog_coords_cache_version != self.domain._version):
-            domain = self.domain
-            attribute = domain.attribute_names['fog_coords']
-            self._fog_coords_cache = attribute.get_region(
-                attribute.buffer, self.start, self.count)
-            self._fog_coords_cache_version = domain._version
+        data = old_dom.index_stream.get_region(src_idx_start, src_idx_count)
+        old_dom.index_stream.allocator.dealloc(src_idx_start, src_idx_count)
 
-        region = self._fog_coords_cache
-        region.invalidate()
-        return region.array
+        new_idx_start = self.domain.safe_index_alloc(src_idx_count)
+        self.domain.index_stream.set_region(new_idx_start, src_idx_count, data)
+        self.index_start = new_idx_start
 
-    def _set_fog_coords(self, data):
-        self._get_fog_coords()[:] = data
+        domain.alloc_to_group(self, group)  # Allocate after new index start.
 
-    _fog_coords_cache = None
-    _fog_coords_cache_version = None
-    fog_coords = property(_get_fog_coords, _set_fog_coords,
-                          doc='''Array of fog coordinate data.''')
 
-    # ---
+class _RunningIndexSupport(_IndexSupport):
+    """Used to mixin an IndexedVertexList class.
 
-    def _get_edge_flags(self):
-        if (self._edge_flags_cache_version != self.domain._version):
-            domain = self.domain
-            attribute = domain.attribute_names['edge_flags']
-            self._edge_flags_cache = attribute.get_region(
-                attribute.buffer, self.start, self.count)
-            self._edge_flags_cache_version = domain._version
+    Keeps an incrementing count for indices in the buffer.
+    """
 
-        region = self._edge_flags_cache
-        region.invalidate()
-        return region.array
+    domain: IndexedVertexDomain | InstancedIndexedVertexDomain
+    index_count: int
+    index_start: int
+    start: int
 
-    def _set_edge_flags(self, data):
-        self._get_edge_flags()[:] = data
+    supports_base_vertex: bool = False
 
-    _edge_flags_cache = None
-    _edge_flags_cache_version = None
-    edge_flags = property(_get_edge_flags, _set_edge_flags,
-                          doc='''Array of edge flag data.''')
+    @property
+    def indices(self) -> list[int]:
+        stored = self.domain.index_stream.get_region(self.index_start, self.index_count)
+        base = self.start
+        return [i - base for i in stored]
 
-    # ---
+    @indices.setter
+    def indices(self, local: Sequence[int]) -> None:
+        base: int = self.start
+        stored: list[int] = [i + base for i in local]
+        self.domain.index_stream.set_region(self.index_start, self.index_count, stored)
 
-    def _get_normals(self):
-        if (self._normals_cache_version != self.domain._version):
-            domain = self.domain
-            attribute = domain.attribute_names['normals']
-            self._normals_cache = attribute.get_region(
-                attribute.buffer, self.start, self.count)
-            self._normals_cache_version = domain._version
+    def migrate(self, domain: IndexedVertexDomain | InstancedIndexedVertexDomain, group: Group) -> None:
+        old_dom = self.domain
+        old_start: int = self.start
+        src_idx_start = self.index_start
+        src_idx_count = self.index_count
 
-        region = self._normals_cache
-        region.invalidate()
-        return region.array
+        super().migrate(domain, group)
 
-    def _set_normals(self, data):
-        self._get_normals()[:] = data
+        data = old_dom.index_stream.get_region(src_idx_start, src_idx_count)
+        old_dom.index_stream.allocator.dealloc(src_idx_start, src_idx_count)
 
-    _normals_cache = None
-    _normals_cache_version = None
-    normals = property(_get_normals, _set_normals,
-                       doc='''Array of normal vector data.''')
+        delta: int = self.start - old_start
+        if delta:
+            data = [i + delta for i in data]
 
-    # ---
+        new_idx_start = self.domain.safe_index_alloc(src_idx_count)
+        self.domain.index_stream.set_region(new_idx_start, src_idx_count, data)
+        self.index_start = new_idx_start
 
-    def _get_secondary_colors(self):
-        if (self._secondary_colors_cache_version != self.domain._version):
-            domain = self.domain
-            attribute = domain.attribute_names['secondary_colors']
-            self._secondary_colors_cache = attribute.get_region(
-                attribute.buffer, self.start, self.count)
-            self._secondary_colors_cache_version = domain._version
+        domain.alloc_to_group(self, group)  # Allocate after new index start.
 
-        region = self._secondary_colors_cache
-        region.invalidate()
-        return region.array
 
-    def _set_secondary_colors(self, data):
-        self._get_secondary_colors()[:] = data
+class _InstancedIndexSupport:
+    domain: InstancedIndexedVertexDomain
+    instance_bucket: InstanceBucket
+    index_count: int
+    index_start: int
+    index_type: DataTypes
+    supports_base_vertex: bool
+    start: int
+    base_vertex: int
 
-    _secondary_colors_cache = None
-    _secondary_colors_cache_version = None
-    secondary_colors = property(_get_secondary_colors, _set_secondary_colors,
-                                doc='''Array of secondary color data.''')
+    def _migrate_instance_bucket(self, old_domain: InstancedIndexedVertexDomain,
+                                 new_domain: InstancedIndexedVertexDomain) -> None:
+        base_vertex = self.start if self.supports_base_vertex else 0
+        self.base_vertex = base_vertex
+        new_bucket = new_domain.instance_domain.get_elements_bucket(
+            mode=0,
+            first_index=self.index_start,
+            index_count=self.index_count,
+            index_type=self.index_type,
+            base_vertex=base_vertex,
+        )
+        old_domain.instance_domain.move_all(self.instance_bucket, new_bucket)
+        self.instance_bucket = new_bucket
 
-    # ---
 
-    _tex_coords_cache = None
-    _tex_coords_cache_version = None
+class _InstancedLocalIndexSupport(_LocalIndexSupport, _InstancedIndexSupport):
+    def migrate(self, domain: InstancedIndexedVertexDomain, group: Group) -> None:
+        old_domain = self.domain
+        super().migrate(domain, group)
+        self._migrate_instance_bucket(old_domain, domain)
 
-    def _get_tex_coords(self):
-        if 'multi_tex_coords' not in self.domain.attribute_names:
-            if (self._tex_coords_cache_version != self.domain._version):
-                domain = self.domain
-                attribute = domain.attribute_names['tex_coords']
-                self._tex_coords_cache = attribute.get_region(
-                    attribute.buffer, self.start, self.count)
-                self._tex_coords_cache_version = domain._version
 
-            region = self._tex_coords_cache
-            region.invalidate()
-            return region.array
-        else:
-            return None
+class _InstancedRunningIndexSupport(_RunningIndexSupport, _InstancedIndexSupport):
+    def migrate(self, domain: InstancedIndexedVertexDomain, group: Group) -> None:
+        old_domain = self.domain
+        super().migrate(domain, group)
+        self._migrate_instance_bucket(old_domain, domain)
 
-    def _set_tex_coords(self, data):
-        if self._get_tex_coords() != None:
-            self._get_tex_coords()[:] = data
-
-    tex_coords = property(_get_tex_coords, _set_tex_coords,
-                          doc='''Array of texture coordinate data.''')
-
-    # ---
-
-    def _get_multi_tex_coords(self):
-        if 'tex_coords' not in self.domain.attribute_names:
-            if (self._tex_coords_cache_version != self.domain._version):
-                domain = self.domain
-                attribute = domain.attribute_names['multi_tex_coords']
-                self._tex_coords_cache = []
-                for a in attribute:
-                    self._tex_coords_cache.append(a.get_region(
-                        a.buffer, self.start, self.count))
-                self._tex_coords_cache_version = domain._version
-
-            region = self._tex_coords_cache
-            array = []
-            for a in region:
-                a.invalidate()
-                array.append(a.array)
-            return array
-        else:
-            return None
-
-    def _set_multi_tex_coords(self, data):
-        if self._get_multi_tex_coords() != None:
-            for a in range(0, len(self._tex_coords_cache),1):
-                if a > len(data):
-                    break
-                elif data[a] != None:
-                    self._tex_coords_cache[a].array[:] = data[a]
-
-    multi_tex_coords = property(_get_multi_tex_coords, _set_multi_tex_coords,
-                                doc='''Multi-array texture coordinate data.''')
-
-    # ---
-
-    _vertices_cache = None
-    _vertices_cache_version = None
-
-    def _get_vertices(self):
-        if (self._vertices_cache_version != self.domain._version):
-            domain = self.domain
-            attribute = domain.attribute_names['vertices']
-            self._vertices_cache = attribute.get_region(
-                attribute.buffer, self.start, self.count)
-            self._vertices_cache_version = domain._version
-
-        region = self._vertices_cache
-        region.invalidate()
-        return region.array
-
-    def _set_vertices(self, data):
-        self._get_vertices()[:] = data
-
-    vertices = property(_get_vertices, _set_vertices,
-                        doc='''Array of vertex coordinate data.''')
-
-class IndexedVertexDomain(VertexDomain):
-    '''Management of a set of indexed vertex lists.
-
-    Construction of an indexed vertex domain is usually done with the
-    `create_indexed_domain` function.
-    '''
-    _initial_index_count = 16
-
-    def __init__(self, attribute_usages, index_gl_type=GL_UNSIGNED_INT):
-        super(IndexedVertexDomain, self).__init__(attribute_usages)
-
-        self.index_allocator = allocation.Allocator(self._initial_index_count)
-
-        self.index_gl_type = index_gl_type
-        self.index_c_type = vertexattribute._c_types[index_gl_type]
-        self.index_element_size = ctypes.sizeof(self.index_c_type)
-        self.index_buffer = vertexbuffer.create_mappable_buffer(
-            self.index_allocator.capacity * self.index_element_size,
-            target=GL_ELEMENT_ARRAY_BUFFER)
-
-    def _safe_index_alloc(self, count):
-        '''Allocate indices, resizing the buffers if necessary.'''
-        try:
-            return self.index_allocator.alloc(count)
-        except allocation.AllocatorMemoryException as e:
-            capacity = _nearest_pow2(e.requested_capacity)
-            self._version += 1
-            self.index_buffer.resize(capacity * self.index_element_size)
-            self.index_allocator.set_capacity(capacity)
-            return self.index_allocator.alloc(count)
-
-    def _safe_index_realloc(self, start, count, new_count):
-        '''Reallocate indices, resizing the buffers if necessary.'''
-        try:
-            return self.index_allocator.realloc(start, count, new_count)
-        except allocation.AllocatorMemoryException as e:
-            capacity = _nearest_pow2(e.requested_capacity)
-            self._version += 1
-            self.index_buffer.resize(capacity * self.index_element_size)
-            self.index_allocator.set_capacity(capacity)
-            return self.index_allocator.realloc(start, count, new_count)
-
-    def create(self, count, index_count):
-        '''Create an :py:class:`IndexedVertexList` in this domain.
-
-        :Parameters:
-            `count` : int
-                Number of vertices to create
-            `index_count`
-                Number of indices to create
-
-        '''
-        start = self._safe_alloc(count)
-        index_start = self._safe_index_alloc(index_count)
-        return IndexedVertexList(self, start, count, index_start, index_count)
-
-    def get_index_region(self, start, count):
-        '''Get a region of the index buffer.
-
-        :Parameters:
-            `start` : int
-                Start of the region to map.
-            `count` : int
-                Number of indices to map.
-
-        :rtype: Array of int
-        '''
-        byte_start = self.index_element_size * start
-        byte_count = self.index_element_size * count
-        ptr_type = ctypes.POINTER(self.index_c_type * count)
-        return self.index_buffer.get_region(byte_start, byte_count, ptr_type)
-
-    def draw(self, mode, vertex_list=None):
-        '''Draw vertices in the domain.
-
-        If `vertex_list` is not specified, all vertices in the domain are
-        drawn.  This is the most efficient way to render primitives.
-
-        If `vertex_list` specifies a :py:class:`VertexList`, only primitives in
-        that list will be drawn.
-
-        :Parameters:
-            `mode` : int
-                OpenGL drawing mode, e.g. ``GL_POINTS``, ``GL_LINES``, etc.
-            `vertex_list` : `IndexedVertexList`
-                Vertex list to draw, or ``None`` for all lists in this domain.
-
-        '''
-        glPushClientAttrib(GL_CLIENT_VERTEX_ARRAY_BIT)
-        for buffer, attributes in self.buffer_attributes:
-            buffer.bind()
-            for attribute in attributes:
-                attribute.enable()
-                attribute.set_pointer(attribute.buffer.ptr)
-        self.index_buffer.bind()
-        if vertexbuffer._workaround_vbo_finish:
-            glFinish()
-
-        if vertex_list is not None:
-            glDrawElements(mode, vertex_list.index_count, self.index_gl_type,
-                self.index_buffer.ptr +
-                    vertex_list.index_start * self.index_element_size)
-        else:
-            starts, sizes = self.index_allocator.get_allocated_regions()
-            primcount = len(starts)
-            if primcount == 0:
-                pass
-            elif primcount == 1:
-                # Common case
-                glDrawElements(mode, sizes[0], self.index_gl_type,
-                    self.index_buffer.ptr + starts[0])
-            elif gl_info.have_version(1, 4):
-                starts = [s * self.index_element_size + self.index_buffer.ptr for s in starts]
-                starts = (ctypes.POINTER(GLvoid) * primcount)(*(GLintptr * primcount)(*starts))
-                sizes = (GLsizei * primcount)(*sizes)
-                glMultiDrawElements(mode, sizes, self.index_gl_type, starts, primcount)
-            else:
-                for start, size in zip(starts, sizes):
-                    glDrawElements(mode, size, self.index_gl_type,
-                        self.index_buffer.ptr +
-                            start * self.index_element_size)
-
-        self.index_buffer.unbind()
-        for buffer, _ in self.buffer_attributes:
-            buffer.unbind()
-        glPopClientAttrib()
 
 class IndexedVertexList(VertexList):
-    '''A list of vertices within an :py:class:`IndexedVertexDomain` that are
-    indexed. Use :py:meth:`IndexedVertexDomain.create` to construct this list.
-    '''
-    def __init__(self, domain, start, count, index_start, index_count):
-        super(IndexedVertexList, self).__init__(domain, start, count)
+    """A list of vertices within an :py:class:`IndexedVertexDomain` that are indexed.
 
+    Use :py:meth:`IndexedVertexDomain.create` to construct this list.
+    """
+    domain: IndexedVertexDomain
+    indexed: bool = True
+
+    index_count: int
+    index_start: int
+
+    def __init__(self, domain: IndexedVertexDomain, group: Group, start: int, count: int, index_start: int,  # noqa: D107
+                 index_count: int) -> None:
+        super().__init__(domain, group, start, count)
         self.index_start = index_start
         self.index_count = index_count
 
-    def draw(self, mode):
-        self.domain.draw(mode, self)
+    def delete(self) -> None:
+        """Delete this group."""
+        super().delete()
+        self.domain.index_stream.dealloc(self.index_start, self.index_count)
 
-    def resize(self, count, index_count):
-        '''Resize this group.
+    @property
+    def indices(self) -> list[int]:
+        """Array of index data."""
+        return self.domain.index_stream.get_region(self.index_start, self.index_count)
 
-        :Parameters:
-            `count` : int
-                New number of vertices in the list.
-            `index_count` : int
-                New number of indices in the list.
+    @indices.setter
+    def indices(self, data: Sequence[int]) -> None:
+        # The vertex data is offset in the buffer, so offset the index values to match. Ex:
+        # vertex_buffer: [_, _, _, _, 1, 2, 3, 4]
+        self.domain.index_stream.set_region(self.index_start, self.index_count, data)
 
-        '''
-        old_start = self.start
-        super(IndexedVertexList, self).resize(count)
 
-        # Change indices (because vertices moved)
-        if old_start != self.start:
-            diff = self.start - old_start
-            self.indices[:] = [i + diff for i in self.indices]
+class InstanceIndexedVertexList(VertexList):
+    """A list of vertices within an :py:class:`IndexedVertexDomain` that are indexed.
 
-        # Resize indices
-        new_start = self.domain._safe_index_realloc(
-            self.index_start, self.index_count, index_count)
-        if new_start != self.index_start:
-            old = self.domain.get_index_region(
-                self.index_start, self.index_count)
-            new = self.domain.get_index_region(
-                self.index_start, self.index_count)
-            new.array[:] = old.array[:]
-            new.invalidate()
-        self.index_start = new_start
+    Use :py:meth:`IndexedVertexDomain.create` to construct this list.
+    """
+    domain: InstancedIndexedVertexDomain
+    indexed: bool = True
+    instanced: bool = True
+
+    index_count: int
+    index_start: int
+
+    instance_bucket: InstanceBucket
+    supports_base_vertex: bool = False
+
+    def __init__(self, domain: InstancedIndexedVertexDomain, group: Group, start: int, count: int,
+                 index_start: int, index_count: int, index_type: DataTypes, base_vertex: int,
+                 instance_bucket: InstanceBucket) -> None:
+        self.index_start = index_start
         self.index_count = index_count
-        self._indices_cache_version = None
+        self.index_type = index_type
+        self.base_vertex = base_vertex
+        self.instance_bucket = instance_bucket
+        self.start_base_vertex = start if self.supports_base_vertex else 0
+        super().__init__(domain, group, start, count)
 
-    def delete(self):
-        '''Delete this group.'''
-        super(IndexedVertexList, self).delete()
-        self.domain.index_allocator.dealloc(self.index_start, self.index_count)
-        
-    def migrate(self, domain):
-        '''Move this group from its current indexed domain and add to the 
-        specified one.  Attributes on domains must match.  (In practice, used 
-        to change parent state of some vertices).
+    def delete(self) -> None:
+        """Delete this group."""
+        key = (self.index_start, self.index_count)
 
-        :Parameters:
-            `domain` : `IndexedVertexDomain`
-                Indexed domain to migrate this vertex list to.
+        # Invalidate all instance handles associated with this list.
+        for instance in list(self.instance_bucket.allocator.slot_to_inst.values()):
+            instance.slot = -1
+        self.instance_bucket.allocator.clear()
 
-        '''
-        old_start = self.start
+        super().delete()
+        self.domain.index_stream.dealloc(self.index_start, self.index_count)
+        self.domain._instance_map.pop(key, None)
+
+    def migrate(self, domain: InstancedIndexedVertexDomain, group: Group) -> None:
         old_domain = self.domain
-        super(IndexedVertexList, self).migrate(domain)
 
-        # Note: this code renumber the indices of the *original* domain
-        # because the vertices are in a new position in the new domain
-        if old_start != self.start:
-            diff = self.start - old_start
-            region = old_domain.get_index_region(self.index_start, 
-                                self.index_count)
-            old_indices = region.array
-            old_indices[:] = [i + diff for i in old_indices]
-            region.invalidate()
-                                                
-        # copy indices to new domain
-        old = old_domain.get_index_region(self.index_start, self.index_count)
-        # must delloc before calling safe_index_alloc or else problems when same
-        # batch is migrated to because index_start changes after dealloc
-        old_domain.index_allocator.dealloc(self.index_start, self.index_count)
-        new_start = self.domain._safe_index_alloc(self.index_count)
-        new = self.domain.get_index_region(new_start, self.index_count)
-        new.array[:] = old.array[:]
-        new.invalidate()
-        
-        self.index_start = new_start
-        self._indices_cache_version = None
+        # Moved vertex data here.
+        super().migrate(domain, group)
 
-    def _set_index_data(self, data):
-        # TODO without region
-        region = self.domain.get_index_region(
-            self.index_start, self.index_count)
-        region.array[:] = data
-        region.invalidate()
+        # Remove from bucket and enter into new bucket.
+        new_bucket = domain.instance_domain.get_elements_bucket(mode=0,
+                                                    first_index=self.index_start,
+                                                   index_count=self.index_count,
+                                                   index_type="I")
 
-    # ---
+        # Move instance data.
+        old_domain.instance_domain.move_all(self.instance_bucket, new_bucket)
+        self.instance_bucket = new_bucket
 
-    def _get_indices(self):
-        if self._indices_cache_version != self.domain._version:
-            domain = self.domain
-            self._indices_cache = domain.get_index_region(
-                self.index_start, self.index_count)
-            self._indices_cache_version = domain._version
+    def create_instance(self, **attributes: Any) -> VertexInstance:
+        return self.instance_bucket.create_instance(**attributes)
 
-        region = self._indices_cache
-        region.invalidate()
-        return region.array
+    @property
+    def instance_count(self) -> int:
+        """Number of active instances in this vertex list."""
+        return self.instance_bucket.instance_count
 
-    def _set_indices(self, data):
-        self._get_indices()[:] = data
+    def get_instance_by_index(self, index: int) -> VertexInstance | None:
+        """Get an instance by its current slot index."""
+        return self.instance_bucket.get_instance_by_index(index)
 
-    _indices_cache = None
-    _indices_cache_version = None
-    indices = property(_get_indices, _set_indices,
-                       doc='''Array of index data.''')
+    def get_instance_index(self, instance: VertexInstance) -> int | None:
+        """Get the current slot index for an instance."""
+        return self.instance_bucket.get_instance_index(instance)
+
+    def swap_instances(self, first: VertexInstance, second: VertexInstance) -> None:
+        """Swap two instances in-place.
+
+        Useful when changing draw order without rebuilding all instance data.
+        This can still be expensive if instance attributes are large.
+        """
+        self.instance_bucket.swap_instances(first, second)
+
+    def move_instance_to_index(self, instance: VertexInstance, index: int) -> None:
+        """Move one instance to a target slot index.
+
+        Other instances shift as needed to keep slots contiguous.
+        This may be expensive when moving across many slots.
+        """
+        self.instance_bucket.move_instance_to_index(instance, index)
+
+    def set_instance_order(self, order: Sequence[VertexInstance]) -> None:
+        """Set the exact full order of all active instances.
+
+        This can be expensive for large lists.
+        """
+        self.instance_bucket.set_instance_order(order)
+
+    def move_to_back(self, instances: Sequence[VertexInstance]) -> None:
+        """Move a subset of instances to the back in the given order.
+
+        Back means lower indices (drawn earlier). Unspecified instances remain
+        after the moved prefix. This can be expensive for large lists.
+        """
+        self.instance_bucket.move_to_back(instances)
+
+    def move_to_top(self, instances: Sequence[VertexInstance]) -> None:
+        """Move a subset of instances to the top in the given order.
+
+        Top means higher indices (drawn later). Unspecified instances remain
+        before the moved suffix. This can be expensive for large lists.
+        """
+        self.instance_bucket.move_to_top(instances)
+
+    def set_attribute_data(self, name: str, data: Any) -> None:
+        if self.initial_attribs[name].fmt.is_instanced:
+            stream = self.instance_bucket.stream
+            count = 1
+            start = 0
+        else:
+            stream = self.domain.attrib_name_buffers[name]
+            count = self.count
+            start = self.start
+        buffer = stream.attrib_name_buffers[name]
+
+        try:
+            buffer.set_region(start, count, data)
+        except ValueError:
+            msg = f"Invalid data size for '{buffer}'. Expected {buffer.element_count * count}, got {len(data)}."
+            raise ValueError(msg) from None
+
+    def dealloc_from_group(self, vertex_list):
+        """Removes a vertex list from a specific state in this domain."""
+        vertex_list.bucket.remove_vertex_list(vertex_list)
+
+class VertexDomain(ABC):
+    """Management of a set of vertex lists.
+
+    Construction of a vertex domain is usually done with the
+    :py:func:`create_domain` function.
+    """
+
+    attribute_meta: dict[str, Attribute]
+    buffer_attributes: list[tuple[AttributeBufferObject, Attribute]]
+    attribute_names: dict[str, Attribute]
+    attrib_name_buffers: dict[str, VertexStream | InstanceStream]
+    vertex_stream: VertexStream
+
+    _property_dict: dict[str, property]
+    _vertexlist_class: type
+
+    _vertex_class: type[VertexList] = VertexList
+
+    def __init__(self, context: SurfaceContext, initial_count: int, attribute_meta: dict[str, Attribute]) -> None:
+        self._context = context or pyglet.graphics.api.core.current_context
+        self.attribute_meta = attribute_meta
+        self.attrib_name_buffers = {}
+        self._supports_multi_draw = self._has_multi_draw_extension(self._context)
+
+        # Separate attributes.
+        self.per_vertex: list[Attribute] = []
+        self.per_instance: list[Attribute] = []
+        for attrib in attribute_meta.values():
+            if not attrib.fmt.is_instanced:
+                self.per_vertex.append(attrib)
+            else:
+                self.per_instance.append(attrib)
+
+        self.vertex_buffers = None
+
+        # This function should set vertex_buffers
+        self._streams = self._create_streams(initial_count)
+        self.vao = self._create_vao()
+        self._vertex_buckets = {}
+
+        for name, attrib in attribute_meta.items():
+            if not attrib.fmt.is_instanced:
+                self.attrib_name_buffers[name] = self.vertex_buffers
+
+        # Make a custom VertexList class w/ properties for each attribute
+        self._vertexlist_class = self._create_vertex_class()
+
+    @abstractmethod
+    def _has_multi_draw_extension(self, ctx: SurfaceContext) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def _create_streams(self, size: int) -> list[VertexStream | IndexStream | InstanceStream]:
+        ...
+
+    @abstractmethod
+    def _create_vao(self) -> VertexArrayBinding:
+        ...
+
+    def bind_vao(self) -> None:
+        """Binds the VAO as well as commit any pending buffer changes to the GPU."""
+        self.vao.bind()
+        for stream in self._streams:
+            stream.commit()
+
+    @property
+    def attribute_names(self):
+        return self.vertex_buffers.attribute_names
+
+    def safe_alloc(self, count: int) -> int:
+        """Allocate vertices, resizing the buffers if necessary."""
+        return self.vertex_buffers.alloc(count)
+
+    def safe_realloc(self, start: int, count: int, new_count: int) -> int:
+        """Reallocate vertices, resizing the buffers if necessary."""
+        return self.vertex_buffers.realloc(start, count, new_count)
+
+    def create(self, group: Group, count: int, indices: Sequence[int] | None = None) -> VertexList:  # noqa: ARG002
+        """Create a :py:class:`VertexList` in this domain.
+
+        Args:
+            group:
+                The :py:class:`Group` the resulting vertex list will be drawn with.
+            count:
+                Number of vertices to create.
+            indices:
+                Ignored for non indexed VertexDomains
+        """
+        start = self.safe_alloc(count)
+        vlist = self._vertexlist_class(self, group, start, count)
+        self.alloc_to_group(vlist, group)
+        return vlist
+
+    def get_drawable_bucket(self, group: Group) -> VertexGroupBucket | None:
+        """Get a bucket that exists and has vertices to draw (not empty)."""
+        bucket = self._vertex_buckets.get(group)
+        if bucket is None or bucket.is_empty:
+            return None
+
+        return bucket
+
+    def alloc_to_group(self, vertex_list, group) -> VertexGroupBucket:
+        """Assigns a vertex list to a specific state in this domain.
+
+        A state bucket does not allocate any vertices or allocates any GPU resources, it is simply to track the
+        data required for drawing in a specific state.
+
+        Args:
+            vertex_list:
+                The vertex list to allocate.
+            group:
+                The group affecting the vertices.
+
+        Returns:
+            The new state bucket object.
+        """
+        state_bucket = self._get_state_bucket(group)
+        state_bucket.add_vertex_list(vertex_list)
+        vertex_list.bucket = state_bucket
+        return state_bucket
+
+    def dealloc_from_group(self, vertex_list):
+        """Removes a vertex list from a specific state in this domain."""
+        assert vertex_list.bucket is not None
+        vertex_list.bucket.remove_vertex_list(vertex_list)
+        vertex_list.bucket = None
+
+    def _get_state_bucket(self, group: Group) -> VertexGroupBucket:
+        """Get a drawable bucket to assign vertex list information to a specific group."""
+        bucket = self._vertex_buckets.get(group)
+        if bucket is None:
+            bucket = self._vertex_buckets[group] = VertexGroupBucket()
+        return bucket
+
+    def has_bucket(self, group: Group) -> bool:
+        return group in self._vertex_buckets
+
+    @abstractmethod
+    def draw(self, mode: int) -> None:
+        """Draw all vertices in the domain.
+
+        All vertices in the domain are drawn at once. This is the
+        most efficient way to render primitives.
+
+        Args:
+            mode:
+                OpenGL drawing mode, e.g. ``GL_POINTS``, ``GL_LINES``, etc.
+
+        """
+
+    @abstractmethod
+    def draw_subset(self, mode: GeometryMode, vertex_list: VertexList) -> None:
+        """Draw a specific VertexList in the domain.
+
+        The `vertex_list` parameter specifies a :py:class:`VertexList`
+        to draw. Only primitives in that list will be drawn.
+
+        Args:
+            mode:
+                OpenGL drawing mode, e.g. ``GL_POINTS``, ``GL_LINES``, etc.
+            vertex_list:
+                Vertex list to draw.
+
+        """
+
+    @property
+    def is_empty(self) -> bool:
+        """If the domain has no vertices."""
+        return not self.vertex_buffers.allocator.starts
+
+    def __repr__(self) -> str:
+        return f'<{self.__class__.__name__}@{id(self):x} vertex_alloc={self.vertex_buffers.allocator}>'
+
+
+class IndexedVertexDomain(VertexDomain):
+    """Management of a set of indexed vertex lists.
+
+    Construction of an indexed vertex domain is usually done with the
+    :py:func:`create_domain` function.
+    """
+    _initial_index_count = 16
+    _vertex_class = IndexedVertexList
+    index_stream: IndexStream
+
+    def __init__(self, context: SurfaceContext, initial_count: int, attribute_meta: dict[str, Attribute],
+                 index_type: DataTypes = "I") -> None:
+        self.index_type = index_type
+        self._supports_base_vertex = context.info.have_extension("GL_ARB_draw_elements_base_vertex")
+        super().__init__(context, initial_count, attribute_meta)
+
+    def get_group_bucket(self, group: Group) -> IndexedVertexGroupBucket:
+        """Get a drawable bucket to assign vertex list information to a specific group."""
+        bucket = self._vertex_buckets.get(group)
+        if bucket is None:
+            bucket = self._vertex_buckets[group] = IndexedVertexGroupBucket()
+        return bucket
+
+    def safe_index_alloc(self, count: int) -> int:
+        """Allocate indices, resizing the buffers if necessary."""
+        return self.index_stream.alloc(count)
+
+    def safe_index_realloc(self, start: int, count: int, new_count: int) -> int:
+        """Reallocate indices, resizing the buffers if necessary."""
+        return self.index_stream.realloc(start, count, new_count)
+
+    def create(self, group: Group, count: int, indices: Sequence[int] | None = None) -> IndexedVertexList:
+        """Create an :py:class:`IndexedVertexList` in this domain.
+
+        Args:
+            group:
+                The :py:class:`Group` the resulting vertex list will be drawn with.
+            count:
+                Number of vertices to create
+            indices:
+                The indices used for this vertex list.
+
+        """
+        index_count = len(indices)
+        start = self.safe_alloc(count)
+        index_start = self.safe_index_alloc(index_count)
+        vertex_list = self._vertexlist_class(self, group, start, count, index_start, index_count)
+        vertex_list.indices = indices  # Move into class at some point?
+        self.alloc_to_group(vertex_list, group)
+        return vertex_list
+
+    def _get_state_bucket(self, group: Group) -> IndexedVertexGroupBucket:
+        """Get a drawable bucket to assign vertex list information to a specific group."""
+        bucket = self._vertex_buckets.get(group)
+        if bucket is None:
+            bucket = self._vertex_buckets[group] = IndexedVertexGroupBucket()
+        return bucket
+
+    def draw(self, mode: int) -> None:
+        """Draw all vertices in the domain.
+
+        All vertices in the domain are drawn at once. This is the
+        most efficient way to render primitives.
+
+        Args:
+            mode:
+                OpenGL drawing mode, e.g. ``GL_POINTS``, ``GL_LINES``, etc.
+
+        """
+
+    def draw_subset(self, mode: GeometryMode, vertex_list: IndexedVertexList) -> None:
+        """Draw a specific IndexedVertexList in the domain.
+
+        The `vertex_list` parameter specifies a :py:class:`IndexedVertexList`
+        to draw. Only primitives in that list will be drawn.
+
+        Args:
+            mode:
+                OpenGL drawing mode, e.g. ``GL_POINTS``, ``GL_LINES``, etc.
+            vertex_list:
+                Vertex list to draw.
+        """
+
+
+class InstancedVertexDomain(VertexDomain):
+    _instance_map: dict[tuple[int, int], InstanceBucket]
+
+    def __init__(self, context: SurfaceContext, initial_count: int, attribute_meta: dict[str, Attribute]) -> None:
+        super().__init__(context, initial_count, attribute_meta)
+        self.instance_domain = self.create_instance_domain(initial_count)
+        self._instance_map = {}
+
+    @abstractmethod
+    def create_instance_domain(self, size: int) -> InstanceDomain:
+        ...
+
+    def _create_vao(self) -> None:
+        """Handled by buckets."""
+
+    def bind_vao(self):
+        self.vertex_buffers.commit()
+
+    def alloc_to_group(self, vertex_list, group):
+        super().alloc_to_group(vertex_list, group)
+        key = (vertex_list.start, vertex_list.count)
+        self._instance_map[key] = vertex_list.instance_bucket
+
+    def create(self, group: Group, count: int, indices: Sequence[int] | None = None) -> VertexList:  # noqa: ARG002
+        start = self.safe_alloc(count)
+        bucket = self.instance_domain.get_arrays_bucket(mode=0, first_vertex=start, vertex_count=count)
+        vlist = self._vertexlist_class(self, group, start, count, bucket)
+        self.alloc_to_group(vlist, group)
+        return vlist
+
+class InstancedIndexedVertexDomain(IndexedVertexDomain):
+    _instance_map: dict[tuple[int, int], InstanceBucket]
+
+    def __init__(self, context: SurfaceContext, initial_count: int, attribute_meta: dict[str, Attribute],
+                 index_type: DataTypes = "I") -> None:
+        super().__init__(context, initial_count, attribute_meta, index_type)
+        self.instance_domain = self.create_instance_domain(initial_count)
+        self._instance_map = {}
+
+    @abstractmethod
+    def create_instance_domain(self, size: int) -> InstanceDomain:
+        ...
+
+    def _create_vao(self) -> None:
+        """Handled by buckets."""
+
+    def bind_vao(self):
+        # VAO's are actually bound when instance buckets are drawn, but we can update the shared buffers atleast.
+        self.vertex_buffers.commit()
+        self.index_stream.commit()
+
+    def alloc_to_group(self, vertex_list, group):
+        super().alloc_to_group(vertex_list, group)
+        key = (vertex_list.index_start, vertex_list.index_count)
+        self._instance_map[key] = vertex_list.instance_bucket
+
+    def create(self, group: Group, count: int, indices: Sequence[int] | None) -> InstanceIndexedVertexList:
+        """Create an :py:class:`IndexedVertexList` in this domain.
+
+        Args:
+            group:
+                The :py:class:`Group` the resulting vertex list will be drawn with.
+            count:
+                Number of vertices to create
+            indices:
+                Indices used for this vertex list.
+
+        """
+        index_count = len(indices)
+        start = self.safe_alloc(count)
+        index_start = self.safe_index_alloc(index_count)
+        base_vertex = start if self._supports_base_vertex else 0
+        bucket = self.instance_domain.get_elements_bucket(
+            mode=0,  # Separate Mode from draw call into bucket at some point?
+            first_index=index_start,
+            index_count=index_count,
+            index_type=self.index_type,
+            base_vertex=base_vertex,
+        )
+        vertex_list = self._vertexlist_class(self, group, start, count, index_start, index_count, self.index_type, base_vertex, bucket)
+        vertex_list.indices = indices
+        self.alloc_to_group(vertex_list, group)
+        return vertex_list
+
+    def _create_vertex_class(self) -> type:
+        mixin = _InstancedLocalIndexSupport if self._supports_base_vertex else _InstancedRunningIndexSupport
+        # Make a custom VertexList class w/ properties for each attribute in the ShaderProgram:
+        return type(self._vertex_class.__name__, (mixin, self._vertex_class),
+                                      self.vertex_buffers._property_dict)  # noqa: SLF001
+
+class Stream(ABC):
+    """A container that handles a set of buffers to be used with domains."""
+    def __init__(self, size: int) -> None:
+        """Initialize the stream and create an allocator.
+
+        Args:
+            size: Initial allocator and buffer size.
+        """
+        self._capacity = size
+        self.allocator = allocation.Allocator(size)
+        self.buffers = []
+
+    def commit(self) -> None:
+        """Binds buffers and commits all pending data to the graphics API."""
+        for buf in self.buffers:
+            buf.commit()
+
+    @abstractmethod
+    def bind_into(self, vao) -> None:
+        """Record this stream into the VAO.
+
+        The VAO should be bound before this function is called.
+        """
+
+    def alloc(self, count: int) -> int:
+        """Allocate a region of data, resizing the buffers if necessary."""
+        try:
+            return self.allocator.alloc(count)
+        except allocation.AllocatorMemoryException as e:
+            capacity = _nearest_pow2(e.requested_capacity)
+            self.resize(capacity)
+            return self.allocator.alloc(count)
+
+    def resize(self, capacity: int) -> None:
+        """Resize all buffers to the specified capacity.
+
+        Size is passed as capacity * stride.
+        """
+        if capacity <= self.allocator.capacity:
+            return
+        self.allocator.set_capacity(capacity)
+        for buf in self.buffers:
+            buf.resize(capacity * buf.stride)
+
+    def dealloc(self, start: int, count: int) -> None:
+        self.allocator.dealloc(start, count)
+
+    def realloc(self, start: int, count: int, new_count: int) -> int:
+        """Reallocate a region of data, resizing the buffers if necessary."""
+        try:
+            return self.allocator.realloc(start, count, new_count)
+        except allocation.AllocatorMemoryException as e:
+            capacity = _nearest_pow2(e.requested_capacity)
+            self.resize(capacity)
+            return self.allocator.realloc(start, count, new_count)
+    @abstractmethod
+    def set_region(self, start: int, count: int, data) -> None: ...
+
+
+class VertexStream(Stream):
+    """A stream of buffers to be used with per-vertex attributes."""
+    attrib_name_buffers: dict[str, AttributeBufferObject]
+    attribute_meta: Sequence[Attribute]
+    def __init__(self, ctx: SurfaceContext, initial_size: int, attrs: Sequence[Attribute], *, divisor: int = 0):
+        super().__init__(initial_size)
+        self._ctx = ctx
+        self.attribute_names = {}  # name: attribute
+        self.buffers = []
+        self.attrib_name_buffers = {}  # dict of AttributeName: AttributeBufferObject (for VertexLists)
+
+        self._property_dict = {}
+        self.attribute_meta = attrs
+        self._allocate_buffers()
+
+    def get_buffer(self, size, attribute):
+        raise NotImplementedError
+
+    def get_graphics_attribute(self, attribute: Attribute, view: AttributeView) -> GraphicsAttribute:
+        raise NotImplementedError
+
+    def _create_separate_buffers(self, attributes: Sequence[Attribute]) -> None:
+        """Takes the attributes and creates a separate buffer for each attribute."""
+        for attribute in attributes:
+            name = attribute.fmt.name
+
+            stride = attribute.fmt.components * attribute.element_size
+            view = AttributeView(offset=0, stride=stride)
+            self.attribute_names[name] = attribute = self.get_graphics_attribute(attribute, view)
+
+            self.attrib_name_buffers[name] = buffer = self.get_buffer(stride * self.allocator.capacity, attribute)
+
+            self.buffers.append(buffer)
+
+            # Create custom property to be used in the VertexList:
+            self._property_dict[name] = _make_attribute_property(name)
+
+    def _create_interleaved_buffers(self) -> NoReturn:
+        """Creates a single buffer for all passed attributes."""
+        raise NotImplementedError
+
+    def _allocate_buffers(self) -> None:
+        for attrib in self.attribute_meta:
+            fmt_dt = attrib.fmt.data_type
+            assert fmt_dt in DataTypeTuple, f"'{fmt_dt}' is not a valid attribute format for '{attrib.fmt.name}'."
+
+        # Only support separate buffers per attrib currently.
+        self._create_separate_buffers(self.attribute_meta)
+
+    def set_region(self, start: int, count: int, data_by_attr: dict[str, Any]):
+        for name, buf in self.attrib_name_buffers.items():
+            buf.set_region(start, count, data_by_attr[name])
+
+    def set_attribute_region(self, name: str, start: int, count: int, data: Any):
+        buf = self.attrib_name_buffers[name]
+        return buf.set_region(start, count, data)
+
+    def get_attribute_region(self, name: str, start: int, count: int):
+        buf = self.attrib_name_buffers[name]
+        return buf.get_region(start, count)
+
+    def invalidate_attribute_region(self, name: str, start: int, count: int):
+        buf = self.attrib_name_buffers[name]
+        buf.invalidate_region(start, count)
+
+    def copy_data(
+        self,
+        dst_slot: int,
+        dst_stream: VertexStream | InstanceStream,
+        src_slot: int,
+        count: int = 1,
+        attrs: Iterable[str] | None = None,
+        *,
+        strict: bool = False,
+    ) -> None:
+        if attrs is None:
+            dst_names = set(dst_stream.attrib_name_buffers.keys())
+            src_names = set(self.attrib_name_buffers.keys())
+            names = dst_names & src_names
+            if strict and dst_names != src_names:
+                err = (f"Attribute layout mismatch: missing in dst={sorted(src_names - dst_names)}, "
+                       f"missing in src={sorted(dst_names - src_names)}")
+                raise ValueError(err)
+        else:
+            names = [n for n in attrs if n in self.attrib_name_buffers and n in dst_stream.attrib_name_buffers]
+            if strict and len(names) != len(list(attrs)):
+                err = f"Requested attribute not present in both streams. {names}, {attrs}"
+                raise ValueError(err)
+
+        for name in names:
+            dst_buf = dst_stream.attrib_name_buffers[name]
+            src_buf = self.attrib_name_buffers[name]
+
+            data = src_buf.get_region(src_slot, count)
+            dst_buf.set_region(dst_slot, count, data)
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}(attributes={list(self.attribute_meta)}, alloc={self.allocator})'
+
+class InstanceStream(VertexStream):
+    """Handles a stream of buffers to be used with the per-instance attributes."""
+
+class IndexStream(Stream):
+    """A container to manage an index buffer for a domain."""
+
+    def __init__(self, ctx, data_type: DataTypes, initial_elems: int):
+        super().__init__(initial_elems)
+        self.ctx = ctx
+        self.data_type = data_type
+        self.buffer = self._create_buffer()
+        self.buffers = [self.buffer]
+
+    def _create_buffer(self) -> IndexedBufferObject:
+        raise NotImplementedError
+
+    def commit(self) -> None:
+        self.buffer.commit()
+
+    def get_region(self, start: int, count: int) -> Any:
+        return self.buffer.get_region(start, count)
+
+    def bind_into(self, vao) -> None:
+        self.buffer.bind_to_index_buffer()
+
+    def set_region(self, start: int, count: int, data) -> None:
+        self.buffer.set_region(start, count, data)
+
+    def copy_region(self, dst: int, src: int, count: int) -> None:
+        self.buffer.copy_region(dst, src, count)
+
+
+class VertexArrayProtocol(Protocol):
+    def bind(self): ...
+    def unbind(self): ...
+
+
+class VertexArrayBinding:
+    """A wrapper for a Vertex Array Object that binds streams.
+
+    VAO's store which attribute layouts are used, as well as which buffer object each attribute pulls from.
+
+    In the case of instanced drawing, each instance needs its own VAO as their per-instance data are separate buffers.
+    """
+    streams: list[VertexStream | InstanceStream | IndexStream]
+
+    def __init__(self, ctx: SurfaceContext, streams: list[VertexStream | InstanceStream | IndexStream]):
+        # attr_map: semantic/name -> location (from ShaderProgram inspection)
+        self._ctx = ctx
+        self.vao = self._create_vao()
+        self.streams = streams
+        self._link()
+
+    def bind(self):
+        raise NotImplementedError
+
+    def _create_vao(self) -> VertexArrayProtocol: ...
+
+    def _link(self):
+        """Link the all streams to the VAO."""
+
+    def __repr__(self):
+        return f'<{self.__class__.__name__}@{id(self):x} vao={self.vao}, streams={self.streams}>'
+
+
+
+class VertexGroupBucket(allocation.RangeAllocator):
+    """A grouping of vertex lists belonging to a single group in a domain.
+
+    Vertex lists are still owned by the domain, but this allows states to be rendered together if possible.
+    """
+
+    __slots__ = ("_merged", "_ranges", "is_dirty")
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def add_vertex_list(self, vl: VertexList) -> None:
+        self.add(vl.start, vl.count)
+
+    def remove_vertex_list(self, vl: VertexList) -> None:
+        self.remove(vl.start, vl.count)
+
+
+class IndexedVertexGroupBucket(allocation.RangeAllocator):
+    """A grouping of indexed vertex lists belonging to a single group in a domain.
+
+    Vertex lists are still owned by the domain, but this allows states to be rendered together if possible.
+    """
+    __slots__ = ("_merged", "_ranges", "is_dirty")
+
+    def add_vertex_list(self, vl: IndexedVertexList) -> None:
+        self.add(vl.index_start, vl.index_count)
+
+    def remove_vertex_list(self, vl: IndexedVertexList) -> None:
+        self.remove(vl.index_start, vl.index_count)

@@ -1,5 +1,5 @@
-import pyglet, random, math
-from game import asteroid, load, player, resources
+import pyglet
+from game import asteroid, load, player
 
 # Set up a window
 game_window = pyglet.window.Window(800, 600)
@@ -16,7 +16,7 @@ game_over_label = pyglet.text.Label(text="GAME OVER",
                                     x=400, y=-300, anchor_x='center',
                                     batch=main_batch, font_size=48)
 
-counter = pyglet.clock.ClockDisplay()
+counter = pyglet.window.FPSDisplay(window=game_window)
 
 player_ship = None
 player_lives = []
@@ -56,7 +56,7 @@ def reset_level(num_lives=2):
     # Make three sprites to represent remaining lives
     player_lives = load.player_lives(num_lives, main_batch)
 
-    # Make some asteroids so we have something to shoot at 
+    # Make some asteroids so we have something to shoot at
     asteroids = load.asteroids(num_asteroids, player_ship.position, main_batch)
 
     # Store all objects that update each frame in a list
@@ -120,7 +120,7 @@ def update(dt):
     for to_remove in [obj for obj in game_objects if obj.dead]:
         if to_remove == player_ship:
             player_dead = True
-        # If the dying object spawned any new objects, add those to the 
+        # If the dying object spawned any new objects, add those to the
         # game_objects list later
         to_add.extend(to_remove.new_objects)
 
@@ -159,5 +159,5 @@ if __name__ == "__main__":
     # Update the game 120 times per second
     pyglet.clock.schedule_interval(update, 1 / 120.0)
 
-    # Tell pyglet to do its thing
+    # Enter into the event loop:
     pyglet.app.run()

@@ -1,64 +1,33 @@
-#!/usr/bin/python
-# $Id: $
-
-from __future__ import print_function
-from __future__ import absolute_import
-from builtins import object
+from __future__ import annotations
+import atexit
 import struct
-from ctypes import *
+import warnings
+from ctypes import HRESULT
+from ctypes.wintypes import ATOM, HFONT, HGDIOBJ, HGLOBAL, HMENU, HMODULE, INT, LPVOID, PUINT, HKEY, LPBYTE, LPCVOID
 
 import pyglet
-from . import constants
+
+from . import com, constants
 from .types import *
 
 IS64 = struct.calcsize("P") == 8
 
-_debug_win32 = pyglet.options['debug_win32']
+_debug_win32 = pyglet.options.debug_win32
 
-if _debug_win32:
-    import traceback
-    _GetLastError = windll.kernel32.GetLastError
-    _SetLastError = windll.kernel32.SetLastError
-    _FormatMessageA = windll.kernel32.FormatMessageA
+DebugLibrary = lambda lib: ctypes.WinDLL(lib, use_last_error=True if _debug_win32 else False)
 
-    _log_win32 = open('debug_win32.log', 'w')
-    
-    def format_error(err):
-        msg = create_string_buffer(256)
-        _FormatMessageA(constants.FORMAT_MESSAGE_FROM_SYSTEM,
-                        c_void_p(),
-                        err,
-                        0,
-                        msg,
-                        len(msg),
-                        c_void_p())
-        return msg.value
-    
-    class DebugLibrary(object):
-        def __init__(self, lib):
-            self.lib = lib
+_gdi32 = DebugLibrary('gdi32')
+_kernel32 = DebugLibrary('kernel32')
+_user32 = DebugLibrary('user32')
+_dwmapi = DebugLibrary('dwmapi')
+_shell32 = DebugLibrary('shell32')
+_ole32 = DebugLibrary('ole32')
+_oleaut32 = DebugLibrary('oleaut32')
+_advapi32 = DebugLibrary("advapi32")
+_comdlg32 = DebugLibrary("comdlg32")
 
-        def __getattr__(self, name):
-            fn = getattr(self.lib, name)
-
-            def f(*args):
-                _SetLastError(0)
-                result = fn(*args)
-                err = _GetLastError()
-                if err != 0:
-                    for entry in traceback.format_list(traceback.extract_stack()[:-1]):
-                        _log_win32.write(entry)
-                    print(format_error(err), file=_log_win32)
-                return result
-
-            return f
-else:
-    DebugLibrary = lambda lib: lib
-
-
-_gdi32 = DebugLibrary(windll.gdi32)
-_kernel32 = DebugLibrary(windll.kernel32)
-_user32 = DebugLibrary(windll.user32)
+if constants.WINDOWS_8_1_OR_GREATER:
+    _shcore = DebugLibrary('shcore')
 
 # _gdi32
 _gdi32.AddFontMemResourceEx.restype = HANDLE
@@ -75,6 +44,8 @@ _gdi32.CreateDIBSection.restype = HBITMAP
 _gdi32.CreateDIBSection.argtypes = [HDC, c_void_p, UINT, c_void_p, HANDLE, DWORD]  # POINTER(BITMAPINFO)
 _gdi32.CreateFontIndirectA.restype = HFONT
 _gdi32.CreateFontIndirectA.argtypes = [POINTER(LOGFONT)]
+_gdi32.CreateFontIndirectW.restype = HFONT
+_gdi32.CreateFontIndirectW.argtypes = [POINTER(LOGFONTW)]
 _gdi32.DeleteDC.restype = BOOL
 _gdi32.DeleteDC.argtypes = [HDC]
 _gdi32.DeleteObject.restype = BOOL
@@ -89,7 +60,7 @@ _gdi32.GetCharABCWidthsW.restype = BOOL
 _gdi32.GetCharABCWidthsW.argtypes = [HDC, UINT, UINT, POINTER(ABC)]
 _gdi32.GetCharWidth32W.restype = BOOL
 _gdi32.GetCharWidth32W.argtypes = [HDC, UINT, UINT, POINTER(INT)]
-_gdi32.GetStockObject.restype =  HGDIOBJ
+_gdi32.GetStockObject.restype = HGDIOBJ
 _gdi32.GetStockObject.argtypes = [c_int]
 _gdi32.GetTextMetricsA.restype = BOOL
 _gdi32.GetTextMetricsA.argtypes = [HDC, POINTER(TEXTMETRIC)]
@@ -123,7 +94,7 @@ _kernel32.GlobalLock.argtypes = [HGLOBAL]
 _kernel32.GlobalUnlock.restype = BOOL
 _kernel32.GlobalUnlock.argtypes = [HGLOBAL]
 _kernel32.SetLastError.restype = DWORD
-_kernel32.SetLastError.argtypes = []
+_kernel32.SetLastError.argtypes = [DWORD]
 _kernel32.SetWaitableTimer.restype = BOOL
 _kernel32.SetWaitableTimer.argtypes = [HANDLE, POINTER(LARGE_INTEGER), LONG, LPVOID, LPVOID, BOOL]  # TIMERAPCPROC
 _kernel32.WaitForSingleObject.restype = DWORD
@@ -140,13 +111,16 @@ _user32.ClipCursor.argtypes = [LPRECT]
 _user32.CreateIconIndirect.restype = HICON
 _user32.CreateIconIndirect.argtypes = [POINTER(ICONINFO)]
 _user32.CreateWindowExW.restype = HWND
-_user32.CreateWindowExW.argtypes = [DWORD, c_wchar_p, c_wchar_p, DWORD, c_int, c_int, c_int, c_int, HWND, HMENU, HINSTANCE, LPVOID]
+_user32.CreateWindowExW.argtypes = [DWORD, c_wchar_p, c_wchar_p, DWORD, c_int, c_int, c_int, c_int, HWND, HMENU,
+                                    HINSTANCE, LPVOID]
 _user32.DefWindowProcW.restype = LRESULT
 _user32.DefWindowProcW.argtypes = [HWND, UINT, WPARAM, LPARAM]
 _user32.DestroyWindow.restype = BOOL
 _user32.DestroyWindow.argtypes = [HWND]
 _user32.DispatchMessageW.restype = LRESULT
 _user32.DispatchMessageW.argtypes = [LPMSG]
+_user32.EnumDisplayDevicesW.restype = BOOL
+_user32.EnumDisplayDevicesW.argtypes = [LPCWSTR, DWORD, POINTER(DISPLAY_DEVICEW), DWORD]
 _user32.EnumDisplayMonitors.restype = BOOL
 _user32.EnumDisplayMonitors.argtypes = [HDC, LPRECT, MONITORENUMPROC, LPARAM]
 _user32.EnumDisplaySettingsW.restype = BOOL
@@ -158,12 +132,14 @@ _user32.GetClientRect.argtypes = [HWND, LPRECT]
 _user32.GetCursorPos.restype = BOOL
 _user32.GetCursorPos.argtypes = [LPPOINT]
 # workaround for win 64-bit, see issue #664
-_user32.GetDC.restype = c_void_p # HDC
-_user32.GetDC.argtypes = [c_void_p] # [HWND]
+_user32.GetDC.restype = c_void_p  # HDC
+_user32.GetDC.argtypes = [c_void_p]  # [HWND]
 _user32.GetDesktopWindow.restype = HWND
 _user32.GetDesktopWindow.argtypes = []
 _user32.GetKeyState.restype = c_short
 _user32.GetKeyState.argtypes = [c_int]
+_user32.GetLayeredWindowAttributes.restype = BOOL
+_user32.GetLayeredWindowAttributes.argtypes = [HWND, POINTER(COLORREF), POINTER(BYTE), POINTER(DWORD)]
 _user32.GetMessageW.restype = BOOL
 _user32.GetMessageW.argtypes = [LPMSG, HWND, UINT, UINT]
 _user32.GetMonitorInfoW.restype = BOOL
@@ -172,10 +148,14 @@ _user32.GetQueueStatus.restype = DWORD
 _user32.GetQueueStatus.argtypes = [UINT]
 _user32.GetSystemMetrics.restype = c_int
 _user32.GetSystemMetrics.argtypes = [c_int]
+_user32.GetWindowLongW.restype = LONG
+_user32.GetWindowLongW.argtypes = [HWND, c_int]
 _user32.LoadCursorW.restype = HCURSOR
 _user32.LoadCursorW.argtypes = [HINSTANCE, c_wchar_p]
 _user32.LoadIconW.restype = HICON
 _user32.LoadIconW.argtypes = [HINSTANCE, c_wchar_p]
+_user32.LoadImageW.restype = HICON
+_user32.LoadImageW.argtypes = [HINSTANCE, LPCWSTR, UINT, c_int, c_int, UINT]
 _user32.MapVirtualKeyW.restype = UINT
 _user32.MapVirtualKeyW.argtypes = [UINT, UINT]
 _user32.MapWindowPoints.restype = c_int
@@ -193,8 +173,8 @@ _user32.RegisterHotKey.argtypes = [HWND, c_int, UINT, UINT]
 _user32.ReleaseCapture.restype = BOOL
 _user32.ReleaseCapture.argtypes = []
 # workaround for win 64-bit, see issue #664
-_user32.ReleaseDC.restype = c_int32 # c_int
-_user32.ReleaseDC.argtypes = [c_void_p, c_void_p] # [HWND, HDC]
+_user32.ReleaseDC.restype = c_int32  # c_int
+_user32.ReleaseDC.argtypes = [c_void_p, c_void_p]  # [HWND, HDC]
 _user32.ScreenToClient.restype = BOOL
 _user32.ScreenToClient.argtypes = [HWND, LPPOINT]
 _user32.SetCapture.restype = HWND
@@ -214,8 +194,12 @@ _user32.SetFocus.restype = HWND
 _user32.SetFocus.argtypes = [HWND]
 _user32.SetForegroundWindow.restype = BOOL
 _user32.SetForegroundWindow.argtypes = [HWND]
+_user32.SetLayeredWindowAttributes.restype = BOOL
+_user32.SetLayeredWindowAttributes.argtypes = [HWND, COLORREF, BYTE, DWORD]
 _user32.SetTimer.restype = UINT_PTR
 _user32.SetTimer.argtypes = [HWND, UINT_PTR, UINT, TIMERPROC]
+_user32.KillTimer.restype = UINT_PTR
+_user32.KillTimer.argtypes = [HWND, UINT_PTR]
 _user32.SetWindowLongW.restype = LONG
 _user32.SetWindowLongW.argtypes = [HWND, c_int, LONG]
 _user32.SetWindowPos.restype = BOOL
@@ -239,4 +223,166 @@ _user32.RegisterRawInputDevices.restype = BOOL
 _user32.RegisterRawInputDevices.argtypes = [PCRAWINPUTDEVICE, UINT, UINT]
 _user32.GetRawInputData.restype = UINT
 _user32.GetRawInputData.argtypes = [HRAWINPUT, UINT, LPVOID, PUINT, UINT]
+_user32.ChangeWindowMessageFilterEx.restype = BOOL
+_user32.ChangeWindowMessageFilterEx.argtypes = [HWND, UINT, DWORD, c_void_p]
+_user32.RegisterDeviceNotificationW.restype = HANDLE
+_user32.RegisterDeviceNotificationW.argtypes = [HANDLE, LPVOID, DWORD]
+_user32.UnregisterDeviceNotification.restype = BOOL
+_user32.UnregisterDeviceNotification.argtypes = [HANDLE]
+_user32.SetClipboardData.restype = HANDLE
+_user32.SetClipboardData.argtypes = [UINT, HANDLE]
+_user32.EmptyClipboard.restype = BOOL
+_user32.EmptyClipboard.argtypes = []
+_user32.OpenClipboard.restype = BOOL
+_user32.OpenClipboard.argtypes = [HWND]
+_user32.CloseClipboard.restype = BOOL
+_user32.CloseClipboard.argtypes = []
+_user32.GetClipboardData.restype = HANDLE
+_user32.GetClipboardData.argtypes = [UINT]
+_user32.SetClipboardData.restype = HANDLE
+_user32.SetClipboardData.argtypes = [UINT, HANDLE]
 
+_user32.SetProcessDPIAware.restype = BOOL
+_user32.SetProcessDPIAware.argtypes = []
+_user32.MonitorFromWindow.restype = HMONITOR
+_user32.MonitorFromWindow.argtypes = [HWND, DWORD]
+
+if constants.WINDOWS_10_CREATORS_UPDATE_OR_GREATER:
+    _user32.SetProcessDpiAwarenessContext.restype = BOOL
+    _user32.SetProcessDpiAwarenessContext.argtypes = [DPI_AWARENESS_CONTEXT]
+
+if constants.WINDOWS_10_ANNIVERSARY_UPDATE_OR_GREATER:
+    _user32.EnableNonClientDpiScaling.restype = BOOL
+    _user32.EnableNonClientDpiScaling.argtypes = [HWND]
+    _user32.GetDpiForWindow.restype = UINT
+    _user32.GetDpiForWindow.argtypes = [HWND]
+
+# dwmapi
+_dwmapi.DwmIsCompositionEnabled.restype = c_int
+_dwmapi.DwmIsCompositionEnabled.argtypes = [POINTER(INT)]
+_dwmapi.DwmFlush.restype = c_int
+_dwmapi.DwmFlush.argtypes = []
+_dwmapi.DwmGetColorizationColor.restype = HRESULT
+_dwmapi.DwmGetColorizationColor.argtypes = [POINTER(DWORD), POINTER(BOOL)]
+_dwmapi.DwmGetWindowAttribute.restype = HRESULT
+_dwmapi.DwmGetWindowAttribute.argtypes = [HWND, DWORD, PVOID, DWORD]
+_dwmapi.DwmEnableBlurBehindWindow.restype = HRESULT
+_dwmapi.DwmEnableBlurBehindWindow.argtypes = [HWND, POINTER(DWM_BLURBEHIND)]
+_dwmapi.DwmSetWindowAttribute.restype = HRESULT
+_dwmapi.DwmSetWindowAttribute.argtypes = [HWND, DWORD, LPCVOID, DWORD]
+
+
+# _shell32
+_shell32.DragAcceptFiles.restype = c_void
+_shell32.DragAcceptFiles.argtypes = [HWND, BOOL]
+_shell32.DragFinish.restype = c_void
+_shell32.DragFinish.argtypes = [HDROP]
+_shell32.DragQueryFileW.restype = UINT
+_shell32.DragQueryFileW.argtypes = [HDROP, UINT, LPWSTR, UINT]
+_shell32.DragQueryPoint.restype = BOOL
+_shell32.DragQueryPoint.argtypes = [HDROP, LPPOINT]
+
+# ole32
+_ole32.CreateStreamOnHGlobal.argtypes = [HGLOBAL, BOOL, LPSTREAM]
+_ole32.CoInitialize.restype = HRESULT
+_ole32.CoInitialize.argtypes = [LPVOID]
+_ole32.CoInitializeEx.restype = HRESULT
+_ole32.CoInitializeEx.argtypes = [LPVOID, DWORD]
+_ole32.OleInitialize.restype = HRESULT
+_ole32.OleInitialize.argtypes = [LPVOID]
+_ole32.OleUninitialize.restype = c_void
+_ole32.OleUninitialize.argtypes = []
+_ole32.CoUninitialize.restype = HRESULT
+_ole32.CoUninitialize.argtypes = []
+_ole32.PropVariantClear.restype = HRESULT
+_ole32.PropVariantClear.argtypes = [c_void_p]
+_ole32.CoCreateInstance.restype = HRESULT
+_ole32.CoCreateInstance.argtypes = [com.REFIID, c_void_p, DWORD, com.REFIID, c_void_p]
+_ole32.CoSetProxyBlanket.restype = HRESULT
+_ole32.CoSetProxyBlanket.argtypes = (c_void_p, DWORD, DWORD, c_void_p, DWORD, DWORD, c_void_p, DWORD)
+_ole32.RegisterDragDrop.restype = HRESULT
+_ole32.RegisterDragDrop.argtypes = [HWND, c_void_p]
+_ole32.RevokeDragDrop.restype = HRESULT
+_ole32.RevokeDragDrop.argtypes = [HWND]
+_ole32.ReleaseStgMedium.restype = c_void
+_ole32.ReleaseStgMedium.argtypes = [POINTER(STGMEDIUM)]
+
+# oleaut32
+_oleaut32.VariantInit.restype = c_void_p
+_oleaut32.VariantInit.argtypes = [c_void_p]
+_oleaut32.VariantClear.restype = HRESULT
+_oleaut32.VariantClear.argtypes = [c_void_p]
+
+#shcore
+if constants.WINDOWS_8_1_OR_GREATER:
+    _shcore.SetProcessDpiAwareness.argtypes = [PROCESS_DPI_AWARENESS]
+    _shcore.SetProcessDpiAwareness.restype = HRESULT
+    _shcore.GetDpiForMonitor.argtypes = [HMONITOR, MONITOR_DPI_TYPE, POINTER(UINT), POINTER(UINT)]
+    _shcore.GetDpiForMonitor.restype = HRESULT
+
+# _advapi32
+_advapi32.RegCloseKey.argtypes = [HKEY]
+_advapi32.RegCloseKey.restype = LONG
+_advapi32.RegOpenKeyExW.argtypes = [HKEY, LPCWSTR, DWORD, REGSAM, POINTER(HKEY)]
+_advapi32.RegOpenKeyExW.restype = LONG
+_advapi32.RegQueryValueExW.argtypes = [HKEY,LPCWSTR,LPVOID, POINTER(DWORD), LPBYTE, POINTER(DWORD)]
+_advapi32.RegQueryValueExW.restype = LONG
+
+# _comdlg32
+_comdlg32.GetOpenFileNameW.argtypes = [POINTER(OPENFILENAMEW)]
+_comdlg32.GetOpenFileNameW.restype = BOOL
+_comdlg32.GetSaveFileNameW.argtypes = [POINTER(OPENFILENAMEW)]
+_comdlg32.GetSaveFileNameW.restype = BOOL
+
+
+if _debug_win32:
+    import traceback
+
+    _log_win32 = open('debug_win32.log', 'w')
+
+
+    def win32_errcheck(result, func, args):
+        last_err = ctypes.get_last_error()
+        if last_err != 0:  # If the result is not success and last error is invalid.
+            _log_win32.writelines(traceback.format_list(traceback.extract_stack()[:-1]))
+            print(f"[Result {result}] Error #{last_err} - {ctypes.FormatError(last_err)}", file=_log_win32)
+        return args
+
+
+    def set_errchecks(lib):
+        """Set errcheck hook on all functions we have defined."""
+        for key in lib.__dict__:
+            if key.startswith('_'):  # Ignore builtins.
+                continue
+            lib.__dict__[key].errcheck = win32_errcheck
+
+
+    set_errchecks(_gdi32)
+    set_errchecks(_kernel32)
+    set_errchecks(_user32)
+    set_errchecks(_dwmapi)
+    set_errchecks(_shell32)
+    set_errchecks(_ole32)
+    set_errchecks(_oleaut32)
+
+# Initialize COM. Required for: WIC (DirectWrite), WMF, and XInput
+try:
+    if pyglet.options.com_mta is True:
+        _ole32.CoInitializeEx(None, constants.COINIT_MULTITHREADED)
+    else:
+        _ole32.CoInitializeEx(None, constants.COINIT_APARTMENTTHREADED)
+except OSError as err:
+    if err.winerror == constants.RPC_E_CHANGED_MODE:
+        warnings.warn("COM mode set by another library in a different mode. Unexpected behavior may occur.")
+    else:
+        warnings.warn("COM was already initialized by another library.")
+
+
+def _uninitialize():
+    try:
+        _ole32.CoUninitialize()
+    except OSError:
+        pass
+
+
+atexit.register(_uninitialize)

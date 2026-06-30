@@ -1,26 +1,13 @@
-from __future__ import absolute_import, print_function
-from builtins import zip
-from builtins import input
-
-import array
 import os
-import pytest
+import array
 import shutil
 import warnings
 
+import pytest
+
 import pyglet
-from pyglet.image import get_buffer_manager
 
 from .data import PygletTestCase
-
-try:
-    # If the easygui package is available, use it to display popup questions, instead of using the
-    # console (which might lose focus to the Pyglet windows).
-    # Not using Pyglet to show a window with the question to prevent interfering with the test.
-    import easygui
-    _has_gui = True
-except:
-    _has_gui = False
 
 local_dir = os.path.dirname(__file__)
 test_dir = os.path.normpath(os.path.join(local_dir, '..'))
@@ -32,7 +19,7 @@ session_screenshot_path = os.path.join(base_screenshot_path, 'session')
 del local_dir, test_dir
 
 
-class InteractiveFixture(object):
+class InteractiveFixture:
     """Fixture for interactive test cases. Provides interactive prompts and
     verifying screenshots.
     """
@@ -84,7 +71,7 @@ class InteractiveFixture(object):
         if window is not None:
             window.switch_to()
 
-        get_buffer_manager().get_color_buffer().image_data.save(screenshot_file_name)
+        pyglet.graphics.texture.get_screenshot().save(screenshot_file_name)
         self.screenshots.append(screenshot_name)
         self._schedule_commit()
 
@@ -129,8 +116,8 @@ class InteractiveFixture(object):
         else:
             assert b is not None, msg
 
-        a_data = a.image_data
-        b_data = b.image_data
+        a_data = a.get_image_data()
+        b_data = b.get_image_data()
 
         assert a_data.width == b_data.width, msg
         assert a_data.height == b_data.height, msg
@@ -178,7 +165,7 @@ class InteractiveTestCase(PygletTestCase):
     allow_missing_screenshots = False
 
     def __init__(self, methodName):
-        super(InteractiveTestCase, self).__init__(methodName=methodName)
+        super().__init__(methodName=methodName)
         self._screenshots = []
 
     def check_screenshots(self):
@@ -221,8 +208,8 @@ class InteractiveTestCase(PygletTestCase):
         else:
             self.assertIsNotNone(b, msg)
 
-        a_data = a.image_data
-        b_data = b.image_data
+        a_data = a.get_image_data()
+        b_data = b.get_image_data()
 
         self.assertEqual(a_data.width, b_data.width, msg)
         self.assertEqual(a_data.height, b_data.height, msg)
@@ -248,7 +235,7 @@ class InteractiveTestCase(PygletTestCase):
         screenshot_name = self._get_next_screenshot_name()
         screenshot_file_name = self._get_screenshot_session_file_name(screenshot_name)
 
-        get_buffer_manager().get_color_buffer().image_data.save(screenshot_file_name)
+        pyglet.graphics.texture.get_screenshot().save(screenshot_file_name)
 
         self._screenshots.append(screenshot_name)
 
@@ -296,34 +283,24 @@ class InteractiveTestCase(PygletTestCase):
     def _get_screenshot_committed_file_name(self, screenshot_name):
         return os.path.join(committed_screenshot_path, screenshot_name)
 
-if _has_gui:
-    def _ask_user_to_verify(description):
-        failure_description = None
-        success = easygui.ynbox(description)
-        if not success:
-            failure_description = easygui.enterbox('Enter failure description:')
+def _ask_user_to_verify(description):
+    failure_description = None
+    print()
+    print(description)
+    while True:
+        response = input('Passed [Yn]: ')
+        if not response:
+            break
+        elif response in 'Nn':
+            failure_description = input('Enter failure description: ')
             if not failure_description:
                 failure_description = 'No description entered'
-        return failure_description
-else:
-    def _ask_user_to_verify(description):
-        failure_description = None
-        print()
-        print(description)
-        while True:
-            response = input('Passed [Yn]: ')
-            if not response:
-                break
-            elif response in 'Nn':
-                failure_description = input('Enter failure description: ')
-                if not failure_description:
-                    failure_description = 'No description entered'
-                break
-            elif response in 'Yy':
-                break
-            else:
-                print('Invalid response')
-        return failure_description
+            break
+        elif response in 'Yy':
+            break
+        else:
+            print('Invalid response')
+    return failure_description
 
 @pytest.fixture
 def interactive(request):

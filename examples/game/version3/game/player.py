@@ -1,16 +1,17 @@
-import pyglet, math
+import pyglet
+import math
 from pyglet.window import key
-from . import physicalobject, resources
+from . import physicalobject, util
 
 
 class Player(physicalobject.PhysicalObject):
     """Physical object that responds to user input"""
 
     def __init__(self, *args, **kwargs):
-        super(Player, self).__init__(img=resources.player_image, *args, **kwargs)
+        super().__init__(img=util.load_centered('player.png'), *args, **kwargs)
 
         # Create a child sprite to show when the ship is thrusting
-        self.engine_sprite = pyglet.sprite.Sprite(img=resources.engine_image, *args, **kwargs)
+        self.engine_sprite = pyglet.sprite.Sprite(img=util.load_centered('engine_flame.png', x_divisor=0.6), *args, **kwargs)
         self.engine_sprite.visible = False
 
         # Set some easy-to-tweak constants
@@ -22,7 +23,7 @@ class Player(physicalobject.PhysicalObject):
 
     def update(self, dt):
         # Do all the normal physics stuff
-        super(Player, self).update(dt)
+        super().update(dt)
 
         if self.key_handler[key.LEFT]:
             self.rotation -= self.rotate_speed * dt
@@ -49,4 +50,4 @@ class Player(physicalobject.PhysicalObject):
         # We have a child sprite which must be deleted when this object
         # is deleted from batches, etc.
         self.engine_sprite.delete()
-        super(Player, self).delete()
+        super().delete()

@@ -1,5 +1,4 @@
-'''
-Code by Richard Jones, released into the public domain.
+"""Code by Richard Jones, released into the public domain.
 
 Inspired by http://screamyguy.net/lines/index.htm
 
@@ -10,24 +9,42 @@ the next line segment.
 
 Note: when working with a single buffer it is always a good idea to
 glFlush() when you've finished your rendering.
-'''
+"""
+from __future__ import annotations
 
-
-import sys
 import random
+import sys
 
 import pyglet
-from pyglet.gl import *
+from pyglet.config import OpenGLUserConfig
+from pyglet.enums import GeometryMode
+
+from pyglet.graphics.api.gl import (
+    GL_BLEND,
+    GL_LINE_SMOOTH,
+    GL_ONE_MINUS_SRC_ALPHA,
+    GL_SRC_ALPHA,
+    glBlendFunc,
+    glEnable,
+    glFlush,
+)
 
 # open a single-buffered window so we can do cheap accumulation
-config = Config(double_buffer=False)
+config = OpenGLUserConfig(double_buffer=False)
 window = pyglet.window.Window(fullscreen='-fs' in sys.argv, config=config)
 
-class Line(object):
+
+class Line:
     batch = pyglet.graphics.Batch()
-    lines = batch.add(100, GL_LINES, None, ('v2f', (0.0,)  * 200), ('c4B', (255, ) * 400))
+    program = pyglet.shapes.get_default_shader()
+    lines = program.vertex_list(100, GeometryMode.LINES, batch=batch,
+                                position=('f', (0, 0) * 100),
+                                colors=('Bn', (255, 255, 255, 255) * 100))
+    black = pyglet.shapes.Rectangle(0, 0, window.width, window.height, color=(0, 0, 0, 32), batch=batch)
     unallocated = list(range(100))
     active = []
+
+    mouse_x = mouse_y = 0
 
     def __init__(self):
         self.n = self.unallocated.pop()
@@ -59,16 +76,9 @@ class Line(object):
 
     @classmethod
     def on_draw(cls):
-        # darken the existing display a little
-        glColor4f(0, 0, 0, .05)
-        glRectf(0, 0, window.width, window.height)
-
-        # render the new lines
         cls.batch.draw()
-
         glFlush()
 
-    mouse_x = mouse_y = 0
     @classmethod
     def on_mouse_motion(cls, x, y, dx, dy):
         cls.mouse_x, cls.mouse_y = x, y
@@ -83,19 +93,17 @@ class Line(object):
             cls.unallocated.append(line.n)
 
         # update line positions
-        n = len(cls.active)
         for n, line in enumerate(cls.active):
             line.update(dt)
-            cls.lines.vertices[n*4:n*4+4] = [line.lx, line.ly, line.x, line.y]
+            cls.lines.position[n*4:n*4+4] = [line.lx, line.ly, line.x, line.y]
+
 
 glEnable(GL_BLEND)
 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 glEnable(GL_LINE_SMOOTH)
 
-# need to set a FPS limit since we're not going to be limited by VSYNC in single-buffer mode
-pyglet.clock.set_fps_limit(30)
 
-pyglet.clock.schedule(Line.tick)
+pyglet.clock.schedule_interval(Line.tick, 1/30)
 window.push_handlers(Line)
-pyglet.app.run()
 
+pyglet.app.run()

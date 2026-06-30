@@ -1,5 +1,5 @@
-import pyglet, random, math
-from game import load, player, resources
+import pyglet
+from game import load, player
 
 # Set up a window
 game_window = pyglet.window.Window(800, 600)
@@ -17,7 +17,7 @@ player_ship = player.Player(x=400, y=300, batch=main_batch)
 # Make three sprites to represent remaining lives
 player_lives = load.player_lives(2, main_batch)
 
-# Make three asteroids so we have something to shoot at 
+# Make three asteroids so we have something to shoot at
 asteroids = load.asteroids(3, player_ship.position, main_batch)
 
 # Store all objects that update each frame in a list
@@ -64,5 +64,5 @@ if __name__ == "__main__":
     # Update the game 120 times per second
     pyglet.clock.schedule_interval(update, 1 / 120.0)
 
-    # Tell pyglet to do its thing
+    # Enter into the event loop:
     pyglet.app.run()

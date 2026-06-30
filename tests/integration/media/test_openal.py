@@ -1,9 +1,11 @@
-from builtins import str, isinstance
 import pytest
-from tests import mock
 import time
 
-from pyglet.media.sources.procedural import Silence
+import pyglet
+_debug = False
+pyglet.options.debug_media = _debug
+
+from pyglet.media.synthesis import Silence
 
 try:
     from pyglet.media.drivers import openal
@@ -27,12 +29,12 @@ def almost_equal_coords(c1, c2, eps=0.0001):
 def device():
     device = openal.interface.OpenALDevice()
     yield device
-    device.delete()
+    device.close()
 
 
-def test_device_create_delete(device):
+def test_device_create_close(device):
     assert device.is_ready
-    device.delete()
+    device.close()
     assert not device.is_ready
 
 
@@ -68,9 +70,7 @@ def test_context_make_current(context):
 
 @pytest.fixture
 def buffer_pool(context):
-    pool = openal.interface.OpenALBufferPool(context)
-    yield pool
-    pool.clear()
+    return context.device.buffer_pool
 
 
 @pytest.fixture
@@ -82,7 +82,7 @@ def buf(buffer_pool):
 
 def test_buffer_create_delete(buf):
     assert buf.is_valid
-    assert buf.al_buffer is not None
+    assert buf.al_name is not None
     assert buf.name > 0
     buf.delete()
     assert not buf.is_valid
@@ -113,7 +113,7 @@ def test_bufferpool_return_valid_buffer(buffer_pool):
     assert buf.is_valid
     assert len(buffer_pool) == 0
 
-    buffer_pool.unqueue_buffer(buf)
+    buffer_pool.return_buffers((buf,))
     assert len(buffer_pool) == 1
 
     buf = buffer_pool.get_buffer()
@@ -141,7 +141,7 @@ def test_bufferpool_return_multiple_valid_buffers(buffer_pool):
 
     return_count = 0
     for buf in bufs:
-        buffer_pool.unqueue_buffer(buf)
+        buffer_pool.return_buffers((buf,))
         return_count += 1
         assert len(buffer_pool) == return_count
 
@@ -159,7 +159,7 @@ def test_bufferpool_return_invalid_buffer(buffer_pool):
 
     buf.delete()
     assert not buf.is_valid
-    buffer_pool.unqueue_buffer(buf)
+    buffer_pool.return_buffers((buf,))
     assert len(buffer_pool) == 0
 
     buf = buffer_pool.get_buffer()
@@ -174,7 +174,7 @@ def test_bufferpool_invalidate_buffer_in_pool(buffer_pool):
     assert buf.is_valid
     assert len(buffer_pool) == 0
 
-    buffer_pool.unqueue_buffer(buf)
+    buffer_pool.return_buffers((buf,))
     assert len(buffer_pool) == 1
 
     buf.delete()
@@ -212,7 +212,7 @@ def filled_buffer(source):
     buf.data(audio_source.get_audio_data(audio_source.audio_format.bytes_per_second),
              audio_source.audio_format)
     yield buf
-    source.buffer_pool.unqueue_buffer(buf)
+    source.buffer_pool.return_buffers((buf,))
 
 
 def test_source_queue_play_unqueue(context, filled_buffer):

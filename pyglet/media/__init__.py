@@ -1,87 +1,172 @@
-# ----------------------------------------------------------------------------
-# pyglet
-# Copyright (c) 2006-2008 Alex Holkner
-# All rights reserved.
-# 
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions 
-# are met:
-#
-#  * Redistributions of source code must retain the above copyright
-#    notice, this list of conditions and the following disclaimer.
-#  * Redistributions in binary form must reproduce the above copyright 
-#    notice, this list of conditions and the following disclaimer in
-#    the documentation and/or other materials provided with the
-#    distribution.
-#  * Neither the name of pyglet nor the names of its
-#    contributors may be used to endorse or promote products
-#    derived from this software without specific prior written
-#    permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-# FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-# COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-# BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-# ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-# POSSIBILITY OF SUCH DAMAGE.
-# ----------------------------------------------------------------------------
-
 """Audio and video playback.
 
-pyglet can play WAV files, and if AVbin is installed, many other audio and
+pyglet can play WAV files, and if FFmpeg is installed, many other audio and
 video formats.
 
-Playback is handled by the :py:class:`Player` class, which reads raw data from
-:py:class:`Source` objects and provides methods for pausing, seeking, adjusting
-the volume, and so on. The :py:class:`Player` class implements the best
-available audio device (currently, only OpenAL is supported)::
+Playback is handled by the :class:`pyglet.media.player.AudioPlayer` class, which reads raw data from
+:class:`Source` objects and provides methods for pausing, seeking, adjusting
+the volume, and so on. The :class:`pyglet.media.player.AudioPlayer` class implements the best
+available audio device. ::
 
-    player = Player()
+    player = AudioPlayer()
 
-A :py:class:`Source` is used to decode arbitrary audio and video files.  It is
-associated with a single player by "queuing" it::
+A :class:`Source` is used to decode arbitrary audio and video files. It is
+associated with a single player by "queueing" it::
 
-    source = load('background_music.mp3')
+    source = load_audio('background_music.mp3')
     player.queue(source)
 
-Use the :py:class:`Player` to control playback.
+Use the :class:`pyglet.media.player.AudioPlayer` to control playback.
 
-If the source contains video, the :py:meth:`Source.video_format` attribute will
-be non-None, and the :py:attr:`Player.texture` attribute will contain the
+If the source contains video, the :py:meth:`Source.video_format` attribute
+will be non-None, and the :py:attr:`Player.texture` attribute will contain the
 current video image synchronised to the audio.
 
 Decoding sounds can be processor-intensive and may introduce latency,
 particularly for short sounds that must be played quickly, such as bullets or
-explosions.  You can force such sounds to be decoded and retained in memory
+explosions. You can force such sounds to be decoded and retained in memory
 rather than streamed from disk by wrapping the source in a
-:py:class:`StaticSource`::
+:class:`StaticSource`::
 
-    bullet_sound = StaticSource(load('bullet.wav'))
+    bullet_sound = StaticSource(load_audio('bullet.wav'))
 
-The other advantage of a :py:class:`StaticSource` is that it can be queued on
+The other advantage of a :class:`StaticSource` is that it can be queued on
 any number of players, and so played many times simultaneously.
 
-pyglet relies on Python's garbage collector to release resources when a player
+Pyglet relies on Python's garbage collector to release resources when a player
 has finished playing a source. In this way some operations that could affect
 the application performance can be delayed.
 
 The player provides a :py:meth:`Player.delete` method that can be used to
-release resources immediately. Also an explicit call to ``gc.collect()`` can be
-used to collect unused resources.
+release resources immediately.
 """
+from __future__ import annotations
 
-# Collect public interface from all submodules/packages
+from typing import TYPE_CHECKING, BinaryIO, Sequence
+
 from .drivers import get_audio_driver
-from .exceptions import *
-from .player import Player, PlayerGroup
-from .sources import *
+from .player import AudioPlayer, VideoPlayer, PlayerGroup
+from .codecs import registry as _codec_registry
+from .codecs import add_default_codecs as _add_default_codecs
+from .codecs import Source, StaticSource, StreamingSource, SourceGroup, have_ffmpeg
 
-# For backwards compatibility, deprecate?
-from .sources import procedural
+from . import synthesis
 
+if TYPE_CHECKING:
+    from pyglet.customtypes import MediaTypes
+    from .codecs import MediaDecoder
+
+
+def _load(filename: str, file: BinaryIO | None = None,
+         streaming: bool = True,
+         decoder: MediaDecoder | None = None,
+         media_capabilities: MediaTypes | Sequence[MediaTypes] | None = None) -> Source | StreamingSource:
+    """Load a Source from disk, or an opened file.
+
+    All decoders that are registered for the filename extension are tried.
+    If none succeed, the exception from the first decoder is raised.
+    You can also specifically pass a decoder instance to use.
+
+    Args:
+        filename:
+            Used to guess the media format, and to load the file if ``file``
+            is unspecified.
+        file:
+            An optional file-like object containing the source data.
+        streaming:
+            If ``False``, a :class:`StaticSource` will be returned; otherwise
+            (default) a :class:`~pyglet.media.StreamingSource` is created.
+        decoder:
+            A specific decoder you wish to use, rather than relying on
+            automatic detection. If specified, no other decoders are tried.
+        media_capabilities:
+            The specific decoder requested for this media.
+    """
+    if decoder:
+        return decoder.decode(filename, file, streaming=streaming)
+
+    return _codec_registry.decode(filename, file, streaming=streaming, media_capabilities=media_capabilities)
+
+
+def load_audio(filename: str, file: BinaryIO | None = None,
+               streaming: bool = True, decoder: MediaDecoder | None = None) -> Source | StreamingSource:
+    """Load a Source from disk, or an opened file.
+
+    All decoders that are registered for the filename extension are tried.
+    If none succeed, the exception from the first decoder is raised.
+    You can also specifically pass a decoder instance to use.
+
+    Args:
+        filename:
+            Used to guess the media format, and to load the file if ``file``
+            is unspecified.
+        file:
+            An optional file-like object containing the source data.
+        streaming:
+            If ``False``, a :class:`StaticSource` will be returned; otherwise
+            (default) a :class:`~pyglet.media.StreamingSource` is created.
+        decoder:
+            A specific decoder you wish to use, rather than relying on
+            automatic detection. If specified, no other decoders are tried.
+    """
+    return _load(filename, file=file, streaming=streaming, decoder=decoder, media_capabilities='audio')
+
+
+def load_video(filename: str, file: BinaryIO | None = None,
+               streaming: bool = True, decoder: MediaDecoder | None = None) -> Source | StreamingSource:
+    """Load a Source from disk, or an opened file.
+
+    All decoders that are registered for the filename extension are tried.
+    If none succeed, the exception from the first decoder is raised.
+    You can also specifically pass a decoder instance to use.
+
+    Args:
+        filename:
+            Used to guess the media format, and to load the file if ``file``
+            is unspecified.
+        file:
+            An optional file-like object containing the source data.
+        streaming:
+            If ``False``, a :class:`StaticSource` will be returned; otherwise
+            (default) a :class:`~pyglet.media.StreamingSource` is created.
+        decoder:
+            A specific decoder you wish to use, rather than relying on
+            automatic detection. If specified, no other decoders are tried.
+    """
+    return _load(filename, file=file, streaming=streaming, decoder=decoder, media_capabilities='video')
+
+
+def play_audio(filename: str, file: BinaryIO | None = None,
+               streaming: bool = True, decoder: MediaDecoder | None = None) -> AudioPlayer:
+    """Load and immediately play an audio source."""
+    source = load_audio(filename, file=file, streaming=streaming, decoder=decoder)
+    return source.play()
+
+
+def play_video(filename: str, file: BinaryIO | None = None,
+               streaming: bool = True, decoder: MediaDecoder | None = None) -> VideoPlayer:
+    """Load and immediately play a video source."""
+    source = load_video(filename, file=file, streaming=streaming, decoder=decoder)
+    player = VideoPlayer()
+    player.queue(source)
+    player.play()
+    return player
+
+
+_add_default_codecs()
+
+__all__ = [
+    'AudioPlayer',
+    'PlayerGroup',
+    'Source',
+    'SourceGroup',
+    'StaticSource',
+    'StreamingSource',
+    'VideoPlayer',
+    'get_audio_driver',
+    'load_audio',
+    'load_video',
+    'play_audio',
+    'play_video',
+    'synthesis',
+]

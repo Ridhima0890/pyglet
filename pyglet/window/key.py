@@ -1,37 +1,3 @@
-# ----------------------------------------------------------------------------
-# pyglet
-# Copyright (c) 2006-2008 Alex Holkner
-# All rights reserved.
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions
-# are met:
-#
-#  * Redistributions of source code must retain the above copyright
-#    notice, this list of conditions and the following disclaimer.
-#  * Redistributions in binary form must reproduce the above copyright
-#    notice, this list of conditions and the following disclaimer in
-#    the documentation and/or other materials provided with the
-#    distribution.
-#  * Neither the name of pyglet nor the names of its
-#    contributors may be used to endorse or promote products
-#    derived from this software without specific prior written
-#    permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-# FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-# COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-# BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-# ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-# POSSIBILITY OF SUCH DAMAGE.
-# ----------------------------------------------------------------------------
-
 """Key constants and utilities for pyglet.window.
 
 Usage::
@@ -59,17 +25,17 @@ Usage::
         if modifiers & key.MOD_CTRL:
 
 """
-from builtins import str
+from __future__ import annotations
 
 from pyglet import compat_platform
 
-__docformat__ = 'restructuredtext'
-__version__ = '$Id$'
 
+class KeyStateHandler:
+    """Simple handler that tracks the state of keys on the keyboard.
 
-class KeyStateHandler(dict):
-    """Simple handler that tracks the state of keys on the keyboard. If a
-    key is pressed then this handler holds a True value for it.
+    If a key is pressed then this handler holds a ``True`` value for it.
+    If the window loses focus, all keys will be reset to ``False`` to avoid a
+    "sticky" key state.
 
     For example::
 
@@ -85,17 +51,23 @@ class KeyStateHandler(dict):
         False
 
     """
-    def on_key_press(self, symbol, modifiers):
-        self[symbol] = True
+    def __init__(self) -> None:  # noqa: D107
+        self.data = {}
 
-    def on_key_release(self, symbol, modifiers):
-        self[symbol] = False
+    def on_key_press(self, symbol: int, modifiers: int) -> None:  # noqa: ARG002
+        self.data[symbol] = True
 
-    def __getitem__(self, key):
-        return self.get(key, False)
+    def on_key_release(self, symbol: int, modifiers: int) -> None:  # noqa: ARG002
+        self.data[symbol] = False
+
+    def on_deactivate(self) -> None:
+        self.data.clear()
+
+    def __getitem__(self, key: int) -> bool:
+        return self.data.get(key, False)
 
 
-def modifiers_string(modifiers):
+def modifiers_string(modifiers: int) -> str:
     """Return a string describing a set of modifiers.
 
     Example::
@@ -103,11 +75,9 @@ def modifiers_string(modifiers):
         >>> modifiers_string(MOD_SHIFT | MOD_CTRL)
         'MOD_SHIFT|MOD_CTRL'
 
-    :Parameters:
-        `modifiers` : int
+    Args:
+        modifiers:
             Bitwise combination of modifier constants.
-
-    :rtype: str
     """
     mod_names = []
     if modifiers & MOD_SHIFT:
@@ -131,44 +101,32 @@ def modifiers_string(modifiers):
     return '|'.join(mod_names)
 
 
-def symbol_string(symbol):
-    """Return a string describing a key symbol.
+def symbol_string(symbol: int) -> str:
+    """Return a string describing a key symbol from a key constant.
 
     Example::
 
         >>> symbol_string(BACKSPACE)
         'BACKSPACE'
-
-    :Parameters:
-        `symbol` : int
-            Symbolic key constant.
-
-    :rtype: str
     """
     if symbol < 1 << 32:
         return _key_names.get(symbol, str(symbol))
-    else:
-        return 'user_key(%x)' % (symbol >> 32)
+
+    return 'user_key(%x)' % (symbol >> 32)
 
 
-def motion_string(motion):
-    """Return a string describing a text motion.
+def motion_string(motion: int) -> str:
+    """Return a string describing a text motion from a motion constant.
 
     Example::
 
         >>> motion_string(MOTION_NEXT_WORD)
         'MOTION_NEXT_WORD'
-
-    :Parameters:
-        `motion` : int
-            Text motion constant.
-
-    :rtype: str
     """
     return _motion_names.get(motion, str(motion))
 
 
-def user_key(scancode):
+def user_key(scancode: int) -> int:
     """Return a key symbol for a key not supported by pyglet.
 
     This can be used to map virtual keys or scancodes from unsupported
@@ -213,7 +171,6 @@ PAUSE         = 0xff13
 SCROLLLOCK    = 0xff14
 SYSREQ        = 0xff15
 ESCAPE        = 0xff1b
-SPACE         = 0xff20
 
 # Cursor control and motion
 HOME          = 0xff50
@@ -243,7 +200,16 @@ MODESWITCH    = 0xff7e
 SCRIPTSWITCH  = 0xff7e
 FUNCTION      = 0xffd2
 
-# Text motion constants: these are allowed to clash with key constants
+# Text motion constants
+# These are allowed to clash with key constants since they are
+# abstractions of keyboard shortcuts. See the following for more
+# information:
+#
+# 1. doc/programming_guide/keyboard.rst
+# 2. doc/modules/window_key.rst
+#
+# To add new motions, consult the Adding New Motions section of
+# doc/programming_guide/keyboard.rst
 MOTION_UP                = UP
 MOTION_RIGHT             = RIGHT
 MOTION_DOWN              = DOWN
@@ -258,6 +224,8 @@ MOTION_BEGINNING_OF_FILE = 5
 MOTION_END_OF_FILE       = 6
 MOTION_BACKSPACE         = BACKSPACE
 MOTION_DELETE            = DELETE
+MOTION_COPY              = 7
+MOTION_PASTE             = 8
 
 # Number pad
 NUMLOCK       = 0xff7f
@@ -321,7 +289,10 @@ F17           = 0xffce
 F18           = 0xffcf
 F19           = 0xffd0
 F20           = 0xffd1
-
+F21           = 0xffd2
+F22           = 0xffd3
+F23           = 0xffd4
+F24           = 0xffd5
 # Modifiers
 LSHIFT        = 0xffe1
 RSHIFT        = 0xffe2
@@ -411,6 +382,8 @@ BRACELEFT     = 0x07b
 BAR           = 0x07c
 BRACERIGHT    = 0x07d
 ASCIITILDE    = 0x07e
+
+
 
 _key_names = {}
 _motion_names = {}

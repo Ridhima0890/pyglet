@@ -1,49 +1,13 @@
-# ----------------------------------------------------------------------------
-# pyglet
-# Copyright (c) 2006-2008 Alex Holkner
-# All rights reserved.
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions
-# are met:
-#
-#  * Redistributions of source code must retain the above copyright
-#    notice, this list of conditions and the following disclaimer.
-#  * Redistributions in binary form must reproduce the above copyright
-#    notice, this list of conditions and the following disclaimer in
-#    the documentation and/or other materials provided with the
-#    distribution.
-#  * Neither the name of pyglet nor the names of its
-#    contributors may be used to endorse or promote products
-#    derived from this software without specific prior written
-#    permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-# FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-# COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-# BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-# ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-# POSSIBILITY OF SUCH DAMAGE.
-# ----------------------------------------------------------------------------
-
 """Decoder for Aseprite animation files in .ase or .aseprite format.
 """
 
-__docformat__ = 'restructuredtext'
-__version__ = '$Id: $'
-
-import struct
+import io
 import zlib
+import struct
 
 from pyglet.image import ImageData, Animation, AnimationFrame
 from pyglet.image.codecs import ImageDecoder, ImageDecodeException
-from pyglet.compat import BytesIO
+
 
 #   Documentation for the Aseprite format can be found here:
 #   https://raw.githubusercontent.com/aseprite/aseprite/master/docs/ase-file-specs.md
@@ -51,7 +15,7 @@ from pyglet.compat import BytesIO
 
 BYTE = "B"
 WORD = "H"
-SIGNED_WORD = "h"
+SHORT = "h"
 DWORD = "I"
 
 BLEND_MODES = {0: 'Normal',
@@ -76,7 +40,7 @@ PALETTE_INDEX = 0
 
 
 def _unpack(fmt, file):
-    """Unpack little endian bytes fram a file-like object. """
+    """Unpack little endian bytes from a file-like object. """
     size = struct.calcsize(fmt)
     data = file.read(size)
     if len(data) < size:
@@ -92,7 +56,7 @@ def _chunked_iter(seq, size):
 #   Class for Aseprite compliant header
 #########################################
 
-class AsepriteHeader(object):
+class AsepriteHeader:
     def __init__(self, file):
         self.file_size = _unpack(DWORD, file)
         self.magic_number = hex(_unpack(WORD, file))
@@ -127,7 +91,7 @@ class Frame(object):
         self.layers = [c for c in self.chunks if type(c) == LayerChunk]
 
     def _parse_chunks(self):
-        fileobj = BytesIO(self._data)
+        fileobj = io.BytesIO(self._data)
         chunks = []
         for chunk in range(self.num_chunks):
             chunk_size = _unpack(DWORD, fileobj)
@@ -154,15 +118,15 @@ class Frame(object):
         return chunks
 
     def _pad_pixels(self, cel):
-        """For cels that dont fill the entire frame, pad with zeros."""
-        fileobj = BytesIO(cel.pixel_data)
+        """For cels that don't fill the entire frame, pad with zeros."""
+        fileobj = io.BytesIO(cel.pixel_data)
 
         padding = b'\x00\x00\x00\x00'
-        top_pad = bytes(padding) * (self.width * cel.y_pos)
-        left_pad = bytes(padding) * cel.x_pos
-        right_pad = bytes(padding) * (self.width - cel.x_pos - cel.width)
-        bottom_pad = bytes(padding) * (self.width * (self.height - cel.height - cel.y_pos))
-        line_size = cel.width * len(padding)
+        top_pad = padding * (self.width * cel.y_pos)
+        left_pad = padding * cel.x_pos
+        right_pad = padding * (self.width - cel.x_pos - cel.width)
+        bottom_pad = padding * (self.width * (self.height - cel.height - cel.y_pos))
+        line_size = cel.width * 4   # (RGBA)
 
         pixel_array = top_pad
         for i in range(cel.height):
@@ -179,9 +143,9 @@ class Frame(object):
 
         if mode == 'Normal':
             final_array = []
-            # If RGB values are > 0, use the top pixel.
+            # If RGBA values are > 0, use the top pixel.
             for bottom_pixel, top_pixel in zip(bottom_iter, top_iter):
-                if sum(top_pixel[:3]) > 0:
+                if any(top_pixel) > 0:      # Any of R, G, B, A > 0
                     final_array.extend(top_pixel)
                 else:
                     final_array.extend(bottom_pixel)
@@ -189,7 +153,7 @@ class Frame(object):
 
         # TODO: implement additional blend modes
         else:
-            raise ImageDecodeException('Unsupported blend mode.')
+            raise ImageDecodeException("Unsupported blend mode: '{}'".format(mode))
 
     def _convert_to_rgba(self, cel):
         if self.color_depth == 8:
@@ -217,7 +181,7 @@ class Frame(object):
 
     def get_pixel_array(self, layers):
         # Start off with an empty RGBA base:
-        pixel_array = bytes(4) * self.width * self.height
+        pixel_array = bytes(4 * self.width * self.height)
 
         # Blend each layer's cel data one-by-one:
         for cel in self.cels:
@@ -233,7 +197,7 @@ class Frame(object):
 #   Aseprite Chunk type definitions
 #########################################
 
-class Chunk(object):
+class Chunk:
     def __init__(self, size, chunk_type):
         self.size = size
         self.chunk_type = chunk_type
@@ -241,8 +205,8 @@ class Chunk(object):
 
 class LayerChunk(Chunk):
     def __init__(self, size, chunk_type, data):
-        super(LayerChunk, self).__init__(size, chunk_type)
-        fileobj = BytesIO(data)
+        super().__init__(size, chunk_type)
+        fileobj = io.BytesIO(data)
         self.flags = _unpack(WORD, fileobj)
         self.layer_type = _unpack(WORD, fileobj)
         self.child_level = _unpack(WORD, fileobj)
@@ -259,11 +223,11 @@ class LayerChunk(Chunk):
 
 class CelChunk(Chunk):
     def __init__(self, size, chunk_type, data):
-        super(CelChunk, self).__init__(size, chunk_type)
-        fileobj = BytesIO(data)
+        super().__init__(size, chunk_type)
+        fileobj = io.BytesIO(data)
         self.layer_index = _unpack(WORD, fileobj)
-        self.x_pos = _unpack(SIGNED_WORD, fileobj)
-        self.y_pos = _unpack(SIGNED_WORD, fileobj)
+        self.x_pos = _unpack(SHORT, fileobj)
+        self.y_pos = _unpack(SHORT, fileobj)
         self.opacity_level = _unpack(BYTE, fileobj)
         self.cel_type = _unpack(WORD, fileobj)
         _zero_unused = _unpack(BYTE * 7, fileobj)
@@ -281,19 +245,19 @@ class CelChunk(Chunk):
 
 class PathChunk(Chunk):
     def __init__(self, size, chunk_type, data):
-        super(PathChunk, self).__init__(size, chunk_type)
+        super().__init__(size, chunk_type)
 
 
 class FrameTagsChunk(Chunk):
     def __init__(self, size, chunk_type, data):
-        super(FrameTagsChunk, self).__init__(size, chunk_type)
+        super().__init__(size, chunk_type)
         # TODO: unpack this data.
 
 
 class PaletteChunk(Chunk):
     def __init__(self, size, chunk_type, data):
-        super(PaletteChunk, self).__init__(size, chunk_type)
-        fileobj = BytesIO(data)
+        super().__init__(size, chunk_type)
+        fileobj = io.BytesIO(data)
         self.palette_size = _unpack(DWORD, fileobj)
         self.first_color_index = _unpack(DWORD, fileobj)
         self.last_color_index = _unpack(DWORD, fileobj)
@@ -312,13 +276,13 @@ class PaletteChunk(Chunk):
 
 class UserDataChunk(Chunk):
     def __init__(self, size, chunk_type, data):
-        super(UserDataChunk, self).__init__(size, chunk_type)
+        super().__init__(size, chunk_type)
         # TODO: unpack this data.
 
 
 class DeprecatedChunk(Chunk):
     def __init__(self, size, chunk_type, data):
-        super(DeprecatedChunk, self).__init__(size, chunk_type)
+        super().__init__(size, chunk_type)
 
 
 #########################################
@@ -332,8 +296,8 @@ class AsepriteImageDecoder(ImageDecoder):
     def get_animation_file_extensions(self):
         return ['.ase', '.aseprite']
 
-    def decode(self, file, filename):
-        header, frames, layers, pitch = self._parse_file(file, filename)
+    def decode(self, filename, file):
+        header, frames, layers, pitch = self._parse_file(filename, file)
         pixel_data = frames[0].get_pixel_array(layers=layers)
         return ImageData(header.width, header.height, 'RGBA', pixel_data, -pitch)
 
@@ -347,7 +311,7 @@ class AsepriteImageDecoder(ImageDecoder):
         return Animation(animation_frames)
 
     @staticmethod
-    def _parse_file(file, filename):
+    def _parse_file(filename, file):
         if not file:
             file = open(filename, 'rb')
 
