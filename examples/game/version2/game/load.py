@@ -1,5 +1,7 @@
-import pyglet, math, random
-from . import physicalobject, resources
+import pyglet
+import math
+import random
+from . import physicalobject, util
 
 
 def distance(point_1=(0, 0), point_2=(0, 0)):
@@ -11,7 +13,7 @@ def player_lives(num_icons, batch=None):
     """Generate sprites for player life icons"""
     player_lives = []
     for i in range(num_icons):
-        new_sprite = pyglet.sprite.Sprite(img=resources.player_image,
+        new_sprite = pyglet.sprite.Sprite(img=util.load_centered('player.png'),
                                           x=785 - i * 30, y=585,
                                           batch=batch)
         new_sprite.scale = 0.5
@@ -23,11 +25,11 @@ def asteroids(num_asteroids, player_position, batch=None):
     """Generate asteroid objects with random positions and velocities, not close to the player"""
     asteroids = []
     for i in range(num_asteroids):
-        asteroid_x, asteroid_y = player_position
+        asteroid_x, asteroid_y, _ = player_position
         while distance((asteroid_x, asteroid_y), player_position) < 100:
             asteroid_x = random.randint(0, 800)
             asteroid_y = random.randint(0, 600)
-        new_asteroid = physicalobject.PhysicalObject(img=resources.asteroid_image,
+        new_asteroid = physicalobject.PhysicalObject(img=util.load_centered('asteroid.png'),
                                                      x=asteroid_x, y=asteroid_y,
                                                      batch=batch)
         new_asteroid.rotation = random.randint(0, 360)

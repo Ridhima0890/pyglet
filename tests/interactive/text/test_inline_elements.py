@@ -1,9 +1,15 @@
-from builtins import range
+from __future__ import annotations
+
+from typing import Tuple
+
 import pytest
-from tests.base.interactive import InteractiveTestCase
 
 import pyglet
-from pyglet.text import caret, document, layout
+import pyglet.text.layout
+from pyglet.enums import GeometryMode
+from pyglet.text import caret, document
+from pyglet.text.layout import IncrementalTextLayout
+from tests.base.interactive import InteractiveTestCase
 
 doctext = """ELEMENT.py test document.
 
@@ -67,46 +73,72 @@ Aliquam erat volutpat.
 
 
 class TestElement(document.InlineElement):
-    vertex_list = None
 
-    def place(self, layout, x, y):
-        self.vertex_list = layout.batch.add(4, pyglet.gl.GL_QUADS, 
-            layout.top_group, 
-            'v2i', 
-            ('c4B', [200, 200, 200, 255] * 4))
+    def __init__(self, ascent, descent, advance):
+        self.vertex_list = None
+        super().__init__(ascent, descent, advance)
 
-        y += self.descent
-        w = self.advance
-        h = self.ascent - self.descent
-        self.vertex_list.vertices[:] = (x, y, 
-                                        x + w, y,
-                                        x + w, y + h,
-                                        x, y + h)
+    def place(self, layout, x, y, z, line_x, line_y, rotation, visible, anchor_x, anchor_y):
+        group = layout.foreground_decoration_group
+        program = pyglet.text.layout.get_default_decoration_shader()
+
+        x1 = line_x
+        y1 = line_y + self.descent
+        x2 = line_x + self.advance
+        y2 = line_y + self.ascent - self.descent
+
+        self.vertex_list = program.vertex_list_indexed(4, GeometryMode.TRIANGLES, [0, 1, 2, 0, 2, 3],
+                                                  layout.batch, group,
+                                                  position=('f', (x1, y1, z, x2, y1, z, x2, y2, z, x1, y2, z)),
+                                                  colors=('Bn', (200, 200, 200, 255) * 4),
+                                                  translation=('f', (x, y, z) * 4),
+                                                  visible=('f', (visible,) * 4),
+                                                  rotation=('f', (rotation,) * 4),
+                                                  anchor=('f', (anchor_x, anchor_y) * 4),
+                                                  view_translation=("f", (0, 0, 0) * 4),
+                                                  )
+    def update_translation(self, x: float, y: float, z: float):
+        self.vertex_list.translation[:] = (x, y, z) * self.vertex_list.count
+
+    def update_view_translation(self, translate_x: float, translate_y: float):
+        self.vertex_list.view_translation[:] = (-translate_x, -translate_y, 0) * self.vertex_list.count
+
+    def update_rotation(self, rotation: float): ...
+    def update_visibility(self, visible: bool): ...
+    def update_anchor(self, anchor_x: float, anchor_y: float): ...
+    def update_color(self, color: Tuple[int, int, int, int]): ...
+
     def remove(self, layout):
         self.vertex_list.delete()
         del self.vertex_list
 
 
-class TestWindow(pyglet.window.Window):
+class BaseTestWindow(pyglet.window.Window):
     def __init__(self, *args, **kwargs):
-        super(TestWindow, self).__init__(*args, **kwargs)
-
-        self.batch = pyglet.graphics.Batch()
-        self.document = pyglet.text.decode_attributed(doctext)
-        for i in range(0, len(doctext), 300):
-            self.document.insert_element(i, TestElement(60, -10, 70))
+        super().__init__(*args, **kwargs)
         self.margin = 2
-        self.layout = layout.IncrementalTextLayout(self.document,
-            self.width - self.margin * 2, self.height - self.margin * 2,
-            multiline=True,
+        self.batch = pyglet.graphics.Batch()
+
+    def create_layout(self, text: str, multiline: bool = True):
+        self.document = pyglet.text.decode_attributed(text)
+        for i in range(0, len(text), 300):
+            self.document.insert_element(i, TestElement(60, -10, 70))
+
+        self.layout = IncrementalTextLayout(
+            self.document,
+            width=self.width - self.margin * 2,
+            height=self.height - self.margin * 2,
+            multiline=multiline,
             batch=self.batch)
         self.caret = caret.Caret(self.layout)
         self.push_handlers(self.caret)
 
         self.set_mouse_cursor(self.get_system_mouse_cursor('text'))
 
+        self.context.set_clear_color(1, 1, 1, 1)
+
     def on_resize(self, width, height):
-        super(TestWindow, self).on_resize(width, height)
+        super().on_resize(width, height)
         self.layout.begin_update()
         self.layout.x = self.margin
         self.layout.y = self.margin
@@ -119,18 +151,17 @@ class TestWindow(pyglet.window.Window):
         self.layout.view_y += scroll_y * 16
 
     def on_draw(self):
-        pyglet.gl.glClearColor(1, 1, 1, 1)
         self.clear()
         self.batch.draw()
 
     def on_key_press(self, symbol, modifiers):
-        super(TestWindow, self).on_key_press(symbol, modifiers)
+        super().on_key_press(symbol, modifiers)
         if symbol == pyglet.window.key.TAB:
             self.caret.on_text('\t')
 
 
 @pytest.mark.requires_user_action
-class InlineElementTestCase(InteractiveTestCase):
+class InlineElementMultilineTestCase(InteractiveTestCase):
     """Test that inline elements are positioned correctly and are repositioned
     within an incremental layout.
 
@@ -143,7 +174,8 @@ class InlineElementTestCase(InteractiveTestCase):
     def test_inline_elements(self):
         self.window = None
         try:
-            self.window = TestWindow(resizable=True, visible=False)
+            self.window = BaseTestWindow(resizable=True, visible=False)
+            self.window.create_layout(doctext, multiline=True)
             self.window.set_visible()
             pyglet.app.run()
             self.user_verify('Pass test?', take_screenshot=False)
@@ -151,3 +183,25 @@ class InlineElementTestCase(InteractiveTestCase):
             if self.window:
                 self.window.close()
 
+@pytest.mark.requires_user_action
+class InlineElementSingleLineTestCase(InteractiveTestCase):
+    """Test that inline elements are positioned correctly and are repositioned
+    within an incremental layout.
+
+    Examine and type over the text in the window that appears.  There are several
+    elements drawn with grey boxes.  These should maintain their sizes and
+    relative document positions as the text is scrolled and edited.
+
+    Press ESC to exit the test.
+    """
+    def test_inline_elements(self):
+        self.window = None
+        try:
+            self.window = BaseTestWindow(resizable=True, visible=False)
+            self.window.create_layout("Lorem ipsum dolor sit amet.", multiline=False)
+            self.window.set_visible()
+            pyglet.app.run()
+            self.user_verify('Pass test?', take_screenshot=False)
+        finally:
+            if self.window:
+                self.window.close()

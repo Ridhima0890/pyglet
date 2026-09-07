@@ -1,151 +1,113 @@
-#!/usr/bin/env python
-
-'''
+"""
 Layout:
 
-.                               (script home)
-    file.txt                    F1
+.                               (file home)
+    f1.txt                          F1
     dir1/
-        file.txt                F2
+        f2.txt                      F2
         dir1/
-            file.txt            F3
+            f3.txt                  F3
         res.zip/
-            file.txt            F7
+            f7.txt                  F7
             dir1/
-                file.txt        F8
+                f8.txt              F8
                 dir1/
-                    file.txt    F9
+                    f9.txt          F9
     dir2/
-        file.txt                F6
+        f6.txt                      F6
 
-'''
+"""
 
 import os
-import sys
-import unittest
+
+import pytest
 
 from pyglet import resource
-from pyglet.compat import asbytes
+from pyglet.util import asbytes
 
-class ResourceLoadingTestCase(unittest.TestCase):
-    def setUp(self):
-        self.script_home = os.path.dirname(__file__)
 
-    def check(self, path, result):
-        self.check_file(path, 'file.txt', result)
+@pytest.fixture
+def loader():
+    script_home = os.path.dirname(__file__)
+    return resource.Loader(script_home=script_home)
 
-    def check_file(self, path, file, result):
-        loader = resource.Loader(path, script_home=self.script_home)
-        self.assertTrue(loader.file(file).read() == asbytes('%s\n' % result))
 
-    def checkFail(self, path):
-        loader = resource.Loader(path, script_home=self.script_home)
-        self.assertRaises(resource.ResourceNotFoundException,
-                          loader.file, 'file.txt')
+def test_base_path_only(loader):
+    assert loader.file('f1.txt').read().strip() == asbytes('F1')
 
-    def test1(self):
-        self.check(None, 'F1')
 
-    def test2(self):
-        self.check('', 'F1')
+def test_blank_base_path(loader):
+    loader.path = ['']
+    assert loader.file('f1.txt').read().strip() == asbytes('F1')
 
-    def test2a(self):
-        self.check('.', 'F1')
 
-    def test2b(self):
-        self.checkFail(())
+def test_unused_paths(loader):
+    loader.path = ['foo', 'bar', '.']
+    assert loader.file('f1.txt').read().strip() == asbytes('F1')
 
-    def test2c(self):
-        self.checkFail('foo')
 
-    def test2d(self):
-        self.checkFail(['foo'])
+def test_subfolder(loader):
+    loader.path = ['dir1', 'dir2']
+    assert loader.file('f2.txt').read().strip() == asbytes('F2')
+    assert loader.file('f6.txt').read().strip() == asbytes('F6')
 
-    def test2e(self):
-        self.check(['foo', '.'], 'F1')
 
-    def test3(self):
-        self.check(['.', 'dir1'], 'F1')
+def test_subfolder_trailing_slash(loader):
+    loader.path = ['dir1/', 'dir2/']
+    assert loader.file('f2.txt').read().strip() == asbytes('F2')
+    assert loader.file('f6.txt').read().strip() == asbytes('F6')
 
-    def test4(self):
-        self.check(['dir1'], 'F2')
 
-    def test5(self):
-        self.check(['dir1', '.'], 'F2')
+def test_sub_subfolder(loader):
+    loader.path = ['dir1/dir1']
+    assert loader.file('f3.txt').read().strip() == asbytes('F3')
 
-    def test6(self):
-        self.check(['dir1/dir1'], 'F3')
 
-    def test7(self):
-        self.check(['dir1', 'dir1/dir1'], 'F2')
+def test_sub_subfolder_trailing_slash(loader):
+    loader.path = ['dir1/dir1/']
+    assert loader.file('f3.txt').read().strip() == asbytes('F3')
 
-    def test8(self):
-        self.check(['dir1/dir1', 'dir1'], 'F3')
 
-    def test9(self):
-        self.check('dir1/res.zip', 'F7')
+def test_zipfile(loader):
+    loader.path = ['dir1/res.zip']
+    assert loader.file('f7.txt').read().strip() == asbytes('F7')
 
-    def test9a(self):
-        self.check('dir1/res.zip/', 'F7')
 
-    def test10(self):
-        self.check('dir1/res.zip/dir1', 'F8')
+def test_zipfile_trailing_slash(loader):
+    loader.path = ['dir1/res.zip/']
+    assert loader.file('f7.txt').read().strip() == asbytes('F7')
 
-    def test10a(self):
-        self.check('dir1/res.zip/dir1/', 'F8')
 
-    def test11(self):
-        self.check(['dir1/res.zip/dir1', 'dir1/res.zip'], 'F8')
+def test_zipfile_subdirs(loader):
+    loader.path = ['dir1/res.zip/dir1', 'dir1/res.zip/dir1/dir1/']
+    assert loader.file('f8.txt').read().strip() == asbytes('F8')
+    assert loader.file('f9.txt').read().strip() == asbytes('F9')
 
-    def test12(self):
-        self.check(['dir1/res.zip', 'dir1/res.zip/dir1'], 'F7')
 
-    def test12a(self):
-        self.check(['dir1/res.zip', 'dir1/res.zip/dir1/dir1'], 'F7')
+def test_reindex_after_path_change(loader):
+    loader.path = ['dir1']
+    loader.reindex()
+    assert loader.file('f2.txt').read().strip() == asbytes('F2')
+    with pytest.raises(resource.ResourceNotFoundException):
+        loader.file('f6.txt')
 
-    def test12b(self):
-        self.check(['dir1/res.zip/dir1/dir1/', 'dir1/res.zip/dir1'], 'F9')
+    loader.path = ['dir2']
+    loader.reindex()
+    assert loader.file('f6.txt').read().strip() == asbytes('F6')
+    with pytest.raises(resource.ResourceNotFoundException):
+        loader.file('f2.txt')
 
-    def test12c(self):
-        self.check(['dir1/res.zip/dir1/dir1', 'dir1/res.zip/dir1'], 'F9')
 
-    def test13(self):
-        self.check(['dir1', 'dir2'], 'F2')
+# Expected Failures:
 
-    def test14(self):
-        self.check(['dir2', 'dir1'], 'F6')
+def test_no_path_exception(loader):
+    loader.path = []
+    pytest.raises(resource.ResourceNotFoundException, loader.file, 'f1.txt')
 
-    # path tests
 
-    def test15(self):
-        self.check_file([''], 'dir1/file.txt', 'F2')
+def test_resource_not_found(loader):
+    pytest.raises(resource.ResourceNotFoundException, loader.file, 'foo')
 
-    def test15a(self):
-        self.check_file([''], 'dir1/dir1/file.txt', 'F3')
 
-    def test15b(self):
-        self.check_file(['dir1'], 'dir1/file.txt', 'F3')
-
-    def test15c(self):
-        self.check_file([''], 'dir2/file.txt', 'F6')
-
-    def test15d(self):
-        self.check_file(['.'], 'dir2/file.txt', 'F6')
-
-    # zip path tests
-
-    def test16(self):
-        self.check_file(['dir1/res.zip'], 'dir1/file.txt', 'F8')
-
-    def test16a(self):
-        self.check_file(['dir1/res.zip/'], 'dir1/file.txt', 'F8')
-
-    def test16a(self):
-        self.check_file(['dir1/res.zip/'], 'dir1/dir1/file.txt', 'F9')
-
-    def test16b(self):
-        self.check_file(['dir1/res.zip/dir1'], 'dir1/file.txt', 'F9')
-
-    def test16c(self):
-        self.check_file(['dir1/res.zip/dir1/'], 'dir1/file.txt', 'F9')
-
+def test_invalid_filename_format(loader):
+    pytest.raises((AttributeError, TypeError), loader.file, ['foo'])

@@ -1,14 +1,12 @@
-import pytest
-from tests.base.interactive import InteractiveTestCase
+from __future__ import annotations
 
-from pyglet import app
-from pyglet import gl
-from pyglet import graphics
-from pyglet import text
-from pyglet.text import caret
-from pyglet.text import layout
-from pyglet import window
-from pyglet.window import key, mouse
+import pytest
+
+import pyglet
+from pyglet import app, text, window
+from pyglet.text import caret, layout
+from pyglet.window import key
+from tests.base.interactive import InteractiveTestCase
 
 doctext = """PLAIN.py test document.
 
@@ -24,24 +22,27 @@ Duis arcu eros, iaculis ut, vehicula in, elementum a, sapien. Phasellus ut tellu
 """
 
 
-class TestWindow(window.Window):
+class BaseTestWindow(window.Window):
     def __init__(self, *args, **kwargs):
-        super(TestWindow, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
-        self.batch = graphics.Batch()
+        self.batch = pyglet.graphics.Batch()
         self.document = text.decode_text(doctext)
         self.margin = 2
         self.layout = layout.IncrementalTextLayout(self.document,
-            self.width - self.margin * 2, self.height - self.margin * 2,
-            multiline=True,
-            batch=self.batch)
+                                                   width=self.width - self.margin * 2,
+                                                   height=self.height - self.margin * 2,
+                                                   multiline=True,
+                                                   batch=self.batch)
         self.caret = caret.Caret(self.layout)
         self.push_handlers(self.caret)
 
         self.set_mouse_cursor(self.get_system_mouse_cursor('text'))
 
+        self.context.set_clear_color(1, 1, 1, 1)
+
     def on_resize(self, width, height):
-        super(TestWindow, self).on_resize(width, height)
+        super().on_resize(width, height)
         self.layout.begin_update()
         self.layout.x = self.margin
         self.layout.y = self.margin
@@ -54,12 +55,11 @@ class TestWindow(window.Window):
         self.layout.view_y += scroll_y * 16
 
     def on_draw(self):
-        gl.glClearColor(1, 1, 1, 1)
         self.clear()
         self.batch.draw()
 
     def on_key_press(self, symbol, modifiers):
-        super(TestWindow, self).on_key_press(symbol, modifiers)
+        super().on_key_press(symbol, modifiers)
         if symbol == key.TAB:
             self.caret.on_text('\t')
 
@@ -74,7 +74,7 @@ class PlainTextTestCase(InteractiveTestCase):
     Press ESC to exit the test.
     """
     def test_plain(self):
-        self.window = TestWindow(resizable=True, visible=False)
+        self.window = BaseTestWindow(resizable=True, visible=False)
         self.window.set_visible()
         app.run()
         self.user_verify('Pass test?', take_screenshot=False)

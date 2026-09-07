@@ -1,48 +1,14 @@
-# ----------------------------------------------------------------------------
-# pyglet
-# Copyright (c) 2006-2008 Alex Holkner
-# All rights reserved.
-# 
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions 
-# are met:
-#
-#  * Redistributions of source code must retain the above copyright
-#    notice, this list of conditions and the following disclaimer.
-#  * Redistributions in binary form must reproduce the above copyright 
-#    notice, this list of conditions and the following disclaimer in
-#    the documentation and/or other materials provided with the
-#    distribution.
-#  * Neither the name of pyglet nor the names of its
-#    contributors may be used to endorse or promote products
-#    derived from this software without specific prior written
-#    permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-# FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-# COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-# BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-# ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-# POSSIBILITY OF SUCH DAMAGE.
-# ----------------------------------------------------------------------------
+from __future__ import annotations
 
 import ctypes
-from pyglet import com
+from ctypes.wintypes import DWORD, HWND, LONG, WORD
+
+from pyglet.libs.win32 import com
 
 lib = ctypes.oledll.dsound
 
-DWORD = ctypes.c_uint32
 LPDWORD = ctypes.POINTER(DWORD)
-LONG = ctypes.c_long
 LPLONG = ctypes.POINTER(LONG)
-WORD = ctypes.c_uint16
-HWND = DWORD
 LPUNKNOWN = ctypes.c_void_p
 
 D3DVALUE = ctypes.c_float
@@ -158,7 +124,7 @@ class DS3DLISTENER(ctypes.Structure):
     ]
 LPDS3DLISTENER = ctypes.POINTER(DS3DLISTENER)
 
-class IDirectSoundBuffer(com.IUnknown):
+class IDirectSoundBuffer(com.pIUnknown):
     _methods_ = [
         ('GetCaps',
          com.STDMETHOD(LPDSBCAPS)),
@@ -204,7 +170,7 @@ class IDirectSoundBuffer(com.IUnknown):
 IID_IDirectSound3DListener = com.GUID(
     0x279AFA84, 0x4981, 0x11CE, 0xA5, 0x21, 0x00, 0x20, 0xAF, 0x0B, 0xE5, 0x60)
 
-class IDirectSound3DListener(com.IUnknown):
+class IDirectSound3DListener(com.pIUnknown):
     _methods_ = [
         ('GetAllParameters',
          com.STDMETHOD(LPDS3DLISTENER)),
@@ -242,7 +208,7 @@ class IDirectSound3DListener(com.IUnknown):
 IID_IDirectSound3DBuffer = com.GUID(
     0x279AFA86, 0x4981, 0x11CE, 0xA5, 0x21, 0x00, 0x20, 0xAF, 0x0B, 0xE5, 0x60)
 
-class IDirectSound3DBuffer(com.IUnknown):
+class IDirectSound3DBuffer(com.pIUnknown):
     _methods_ = [
         ('GetAllParameters',
          com.STDMETHOD(LPDS3DBUFFER)),
@@ -282,7 +248,7 @@ class IDirectSound3DBuffer(com.IUnknown):
          com.STDMETHOD(D3DVALUE, D3DVALUE, D3DVALUE, DWORD)),
     ]
 
-class IDirectSound(com.IUnknown):
+class IDirectSound(com.pIUnknown):
     _methods_ = [
         ('CreateSoundBuffer', 
          com.STDMETHOD(LPDSBUFFERDESC, 
@@ -304,7 +270,6 @@ class IDirectSound(com.IUnknown):
         ('Initialize', 
          com.STDMETHOD(com.LPGUID)),
     ]
-    _type_ = com.COMInterface
 
 DirectSoundCreate = lib.DirectSoundCreate
 DirectSoundCreate.argtypes = \

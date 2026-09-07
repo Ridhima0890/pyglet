@@ -1,37 +1,3 @@
-# ----------------------------------------------------------------------------
-# pyglet
-# Copyright (c) 2006-2008 Alex Holkner
-# All rights reserved.
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions
-# are met:
-#
-#  * Redistributions of source code must retain the above copyright
-#    notice, this list of conditions and the following disclaimer.
-#  * Redistributions in binary form must reproduce the above copyright
-#    notice, this list of conditions and the following disclaimer in
-#    the documentation and/or other materials provided with the
-#    distribution.
-#  * Neither the name of pyglet nor the names of its
-#    contributors may be used to endorse or promote products
-#    derived from this software without specific prior written
-#    permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-# FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-# COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-# BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-# ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-# POSSIBILITY OF SUCH DAMAGE.
-# ----------------------------------------------------------------------------
-
 """Load application resources from a known path.
 
 Loading resources by specifying relative paths to filenames is often
@@ -41,10 +7,11 @@ directory as the application's script files.
 This module allows applications to specify a search path for resources.
 Relative paths are taken to be relative to the application's ``__main__``
 module. ZIP files can appear on the path; they will be searched inside.  The
-resource module also behaves as expected when applications are bundled using py2exe or py2app.
+resource module also behaves as expected when applications are bundled using
+Freezers such as PyInstaller, Nuitka, py2app, etc..
 
-As well as providing file references (with the :py:func:`file` function), the
-resource module also contains convenience functions for loading images,
+In addition to providing file references (with the :py:func:`file` function),
+the resource module also contains convenience functions for loading images,
 textures, fonts, media and documents.
 
 3rd party modules or packages not bound to a specific application should
@@ -60,7 +27,7 @@ is a list of locations to search for resources.  Locations are searched in the
 order given in the path.  If a location is not valid (for example, if the
 directory does not exist), it is skipped.
 
-Locations in the path beginning with an ampersand (''@'' symbol) specify
+Locations in the path beginning with an "at" symbol (''@'') specify
 Python packages.  Other locations specify a ZIP archive or directory on the
 filesystem.  Locations that are not absolute are assumed to be relative to the
 script home.  Some examples::
@@ -73,436 +40,471 @@ script home.  Some examples::
     # by the `res/images` directory.
     path = ['@levels.level1', 'res/images']
 
-Paths are always case-sensitive and forward slashes are always used as path
-separators, even in cases when the filesystem or platform does not do this.
-This avoids a common programmer error when porting applications between
-platforms.
+Paths are always **case-sensitive** and **forward slashes are always used**
+as path separators, even in cases when the filesystem or platform does not do this.
+This avoids a common programmer error when porting applications between platforms.
 
 The default path is ``['.']``.  If you modify the path, you must call
 :py:func:`reindex`.
-
-.. versionadded:: 1.1
 """
-from future import standard_library
-
-standard_library.install_aliases()
-from builtins import object
-from past.builtins import basestring
-
-__docformat__ = 'restructuredtext'
-__version__ = '$Id: $'
+from __future__ import annotations
 
 import os
-import weakref
 import sys
+import weakref
 import zipfile
+from io import BytesIO, StringIO
+from typing import IO, TYPE_CHECKING, Literal, overload
 
 import pyglet
-from pyglet.compat import BytesIO
+
+if TYPE_CHECKING:
+    from pyglet.customtypes import MediaTypes
+    from pyglet.graphics.texture import Texture, TextureRegion, TextureArrayRegion
+
+    from pyglet.graphics.shader import Shader
+    from pyglet.image import ImageData
+    from pyglet.image.animation import Animation
+    from pyglet.graphics.atlas import TextureBin, TextureArrayBin
+    from pyglet.media.codecs import Source
+    from pyglet.model import Scene
+    from pyglet.text.document import AbstractDocument
 
 
 class ResourceNotFoundException(Exception):
     """The named resource was not found on the search path."""
 
-    def __init__(self, name):
-        message = ('Resource "%s" was not found on the path.  '
-                   'Ensure that the filename has the correct captialisation.') % name
+    def __init__(self, name: str) -> None:
+        message = (f"Resource '{name}' was not found on the path.  "
+                   "Ensure that the filename has the correct capitalisation.")
         Exception.__init__(self, message)
 
 
-def get_script_home():
+class UndetectableShaderType(Exception):
+    """The type of the Shader source could not be identified."""
+
+    def __init__(self, name: str) -> None:
+        message = (f"The Shader type of '{name}' could not be determined. "
+                   "Ensure that your source file has a standard extension, "
+                   "or provide a valid 'shader_type' parameter.")
+        Exception.__init__(self, message)
+
+
+def get_script_home() -> str:
     """Get the directory containing the program entry module.
 
     For ordinary Python scripts, this is the directory containing the
-    ``__main__`` module.  For executables created with py2exe the result is
-    the directory containing the running executable file.  For OS X bundles
-    created using Py2App the result is the Resources directory within the
-    running bundle.
+    ``__main__`` module. For applications that have been bundled with
+    PyInstaller, Nuitka, etc., this may be the bundle path or a
+    temporary directory.
 
     If none of the above cases apply and the file for ``__main__`` cannot
     be determined the working directory is returned.
 
     When the script is being run by a Python profiler, this function
     may return the directory where the profiler is running instead of
-    the directory of the real script. To workaround this behaviour the
+    the directory of the real script. To work around this behaviour the
     full path to the real script can be specified in :py:attr:`pyglet.resource.path`.
-
-    :rtype: str
     """
     frozen = getattr(sys, 'frozen', None)
     meipass = getattr(sys, '_MEIPASS', None)
     if meipass:
         # PyInstaller
         return meipass
-    elif frozen in ('windows_exe', 'console_exe'):
+    if frozen in ('windows_exe', 'console_exe'):
         return os.path.dirname(sys.executable)
-    elif frozen == 'macosx_app':
+    if frozen == 'macosx_app':
         # py2app
         return os.environ['RESOURCEPATH']
-    else:
-        main = sys.modules['__main__']
-        if hasattr(main, '__file__'):
-            return os.path.dirname(os.path.abspath(main.__file__))
-        else:
-            if 'python' in os.path.basename(sys.executable):
-                # interactive
-                return os.getcwd()
-            else:
-                # cx_Freeze
-                return os.path.dirname(sys.executable)
+    main = sys.modules['__main__']
+    if hasattr(main, '__file__'):
+        return os.path.dirname(os.path.abspath(main.__file__))
+    if 'python' in os.path.basename(sys.executable):
+        # interactive
+        return os.getcwd()
+    # cx_Freeze
+    return os.path.dirname(sys.executable)
 
 
-def get_settings_path(name):
-    """Get a directory to save user preferences.
+def get_settings_path(name: str) -> str:
+    """Get a directory path to save user preferences.
 
     Different platforms have different conventions for where to save user
-    preferences, saved games, and settings.  This function implements those
-    conventions.  Note that the returned path may not exist: applications
-    should use ``os.makedirs`` to construct it if desired.
+    preferences and settings. This function implements those conventions
+    as described below, and returns a fully formed path.
 
-    On Linux, a directory `name` in the user's configuration directory is
+    On Linux, a directory ``name`` in the user's configuration directory is
     returned (usually under ``~/.config``).
 
-    On Windows (including under Cygwin) the `name` directory in the user's
-    ``Application Settings`` directory is returned.
+    On Windows (including under Cygwin) the ``name`` directory in the user's
+    ``Application Settings`` (AppData) directory is returned.
 
-    On Mac OS X the `name` directory under ``~/Library/Application Support``
+    On Mac OS X the ``name`` directory under ``~/Library/Application Support``
     is returned.
 
-    :Parameters:
-        `name` : str
-            The name of the application.
-
-    :rtype: str
+    .. note:: This function does not perform any directory creation. Users
+              should use ``os.path.exists`` and ``os.makedirs`` to construct
+              the directory if desired.
     """
-
+    # In Pyodide (browser) use IDBFS-mounted directory
+    if sys.platform == "emscripten":
+        return f"/data/{name}"
     if pyglet.compat_platform in ('cygwin', 'win32'):
         if 'APPDATA' in os.environ:
             return os.path.join(os.environ['APPDATA'], name)
-        else:
-            return os.path.expanduser('~/%s' % name)
-    elif pyglet.compat_platform == 'darwin':
-        return os.path.expanduser('~/Library/Application Support/%s' % name)
-    elif pyglet.compat_platform.startswith('linux'):
+        return os.path.expanduser(f'~/{name}')
+    if pyglet.compat_platform == 'darwin':
+        return os.path.expanduser(f'~/Library/Application Support/{name}')
+    if pyglet.compat_platform.startswith('linux'):
         if 'XDG_CONFIG_HOME' in os.environ:
             return os.path.join(os.environ['XDG_CONFIG_HOME'], name)
-        else:
-            return os.path.expanduser('~/.config/%s' % name)
-    else:
-        return os.path.expanduser('~/.%s' % name)
+        return os.path.expanduser(f'~/.config/{name}')
+    return os.path.expanduser(f'~/.{name}')
 
 
-class Location(object):
+def get_data_path(name: str) -> str:
+    """Get a directory to save user data.
+
+    For a Posix or Linux based system many distributions have a separate
+    directory to store user data for a specific application and this 
+    function returns the path to that location.
+
+    On Linux, a directory ``name`` in the user's data directory is returned
+    (usually under ``~/.local/share``).
+
+    On Windows (including under Cygwin) the ``name`` directory in the user's
+    ``Application Settings`` (AppData) directory is returned.
+
+    On Mac OS X the ``name`` directory under ``~/Library/Application Support``
+    is returned.
+
+    .. note:: This function does not perform any directory creation. Users
+              should use ``os.path.exists`` and ``os.makedirs`` to construct
+              the directory if desired.
+    """
+    # In Pyodide (browser) use IDBFS-mounted directory
+    if sys.platform == "emscripten":
+        return f"/data/{name}"
+    if pyglet.compat_platform in ('cygwin', 'win32'):
+        if 'APPDATA' in os.environ:
+            return os.path.join(os.environ['APPDATA'], name)
+        return os.path.expanduser(f'~/{name}')
+    if pyglet.compat_platform == 'darwin':
+        return os.path.expanduser(f'~/Library/Application Support/{name}')
+    if pyglet.compat_platform.startswith('linux'):
+        if 'XDG_DATA_HOME' in os.environ:
+            return os.path.join(os.environ['XDG_DATA_HOME'], name)
+        return os.path.expanduser(f'~/.local/share/{name}')
+    return os.path.expanduser(f'~/.{name}')
+
+
+class Location:
     """Abstract resource location.
 
-    Given a location, a file can be loaded from that location with the `open`
-    method.  This provides a convenient way to specify a path to load files
-    from, and not necessarily have that path reside on the filesystem.
+    Given a location, a file can be loaded from that location with the
+    :py:meth:`open` method. This provides a convenient way to specify a
+    path to load files from, even when that path does not reside on the
+    filesystem.
     """
 
-    def open(self, filename, mode='rb'):
+    def open(self, name: str, mode: str = 'rb') -> BytesIO | StringIO | IO:
         """Open a file at this location.
 
-        :Parameters:
-            `filename` : str
-                The filename to open.  Absolute paths are not supported.
+        Args:
+            name:
+                The file name to open. Absolute paths are not supported.
                 Relative paths are not supported by most locations (you
-                should specify only a filename with no path component).
-            `mode` : str
+                should specify only a file name with no path component).
+            mode:
                 The file mode to open with.  Only files opened on the
                 filesystem make use of this parameter; others ignore it.
-
-        :rtype: file object
         """
         raise NotImplementedError('abstract')
 
 
 class FileLocation(Location):
-    """Location on the filesystem.
-    """
+    """Location on the filesystem."""
 
-    def __init__(self, path):
-        """Create a location given a relative or absolute path.
+    def __init__(self, filepath: str) -> None:
+        """Create a location given a relative or absolute path."""
+        self.path = filepath
 
-        :Parameters:
-            `path` : str
-                Path on the filesystem.
-        """
-        self.path = path
-
-    def open(self, filename, mode='rb'):
+    def open(self, filename: str, mode: str = 'rb') -> IO:
         return open(os.path.join(self.path, filename), mode)
 
 
 class ZIPLocation(Location):
-    """Location within a ZIP file.
-    """
+    """Location within a ZIP file."""
 
-    def __init__(self, zip, dir):
-        """Create a location given an open ZIP file and a path within that
-        file.
+    def __init__(self, zipfileobj: zipfile.ZipFile, directory: str | None) -> None:
+        """Create a location given an open ZIP file and a path within that file.
 
-        :Parameters:
-            `zip` : ``zipfile.ZipFile``
+        Args:
+            zipfileobj:
                 An open ZIP file from the ``zipfile`` module.
-            `dir` : str
+            directory:
                 A path within that ZIP file.  Can be empty to specify files at
                 the top level of the ZIP file.
-
         """
-        self.zip = zip
-        self.dir = dir
+        self.zip = zipfileobj
+        self.dir = directory
 
-    def open(self, filename, mode='rb'):
-        if self.dir:
-            path = self.dir + '/' + filename
-        else:
-            path = filename
-        text = self.zip.read(path)
-        return BytesIO(text)
+    def open(self, filename: str, mode: str='rb') -> BytesIO | StringIO:
+        """Open a file from inside the ZipFile.
+
+        Args:
+            filename:
+                The filename to open.
+            mode:
+                Valid modes are 'r' and 'rb'.
+        """
+        _path = f"{self.dir}/{filename}" if self.dir else filename
+        _forward_slash_path = _path.replace(os.sep, '/')  # zip can only handle forward slashes
+        _bytes = self.zip.read(_forward_slash_path)
+        if mode == 'r':
+            return StringIO(_bytes.decode())
+        return BytesIO(_bytes)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(dir='{self.dir}')"
 
 
 class URLLocation(Location):
     """Location on the network.
 
-    This class uses the ``urlparse`` and ``urllib2`` modules to open files on
-    the network given a URL.
+    This class uses the ``urllib`` module to open files on
+    the network, given a base URL.
     """
 
-    def __init__(self, base_url):
-        """Create a location given a base URL.
-
-        :Parameters:
-            `base_url` : str
-                URL string to prepend to filenames.
-
-        """
+    def __init__(self, base_url: str) -> None:
+        """Create a location given a base URL."""
         self.base = base_url
 
-    def open(self, filename, mode='rb'):
-        import urllib.request, urllib.error, urllib.parse
+    def open(self, filename: str, mode: str = '') -> IO:
+        """Open a remote file.
+
+        Args:
+            filename:
+                The name of the remote resource to open.
+            mode:
+                Unused, as the mode is determined by the remote server.
+        """
+        import urllib.parse
+        import urllib.request
         url = urllib.parse.urljoin(self.base, filename)
-        return urllib.request.urlopen(url)
+        return BytesIO(urllib.request.urlopen(url).read())
 
 
-class Loader(object):
+class Loader:
     """Load program resource files from disk.
 
     The loader contains a search path which can include filesystem
-    directories, ZIP archives and Python packages.
-
-    :Ivariables:
-        `path` : list of str
-            List of search locations.  After modifying the path you must
-            call the `reindex` method.
-        `script_home` : str
-            Base resource location, defaulting to the location of the
-            application script.
-
+    directories, ZIP archives, URLs, and Python packages.
     """
-    def __init__(self, path=None, script_home=None):
+    def __init__(self, pathlist: list[str] | None = None, script_home: str | None = None) -> None:
         """Create a loader for the given path.
 
-        If no path is specified it defaults to ``['.']``; that is, just the
-        program directory.
+        If no path is specified it defaults to ``['.']``; that is,
+        just the program directory.
 
         See the module documentation for details on the path format.
 
-        :Parameters:
-            `path` : list of str
+        Args:
+            pathlist:
                 List of locations to search for resources.
-            `script_home` : str
-                Base location of relative files.  Defaults to the result of
-                `get_script_home`.
-
+            script_home:
+                Base location of relative files. Defaults to
+                the result of :py:func:`get_script_home`.
         """
-        if path is None:
-            path = ['.']
-        if isinstance(path, basestring):
-            path = [path]
-        self.path = list(path)
-        if script_home is None:
-            script_home = get_script_home()
-        self._script_home = script_home
-        self._index = None
+        pathlist = pathlist or ['.']
+
+        if isinstance(pathlist, str):
+            pathlist = [pathlist]
+
+        self.path = list(pathlist)
+        self._script_home = script_home or get_script_home()
+        self._index: dict | None = None
 
         # Map bin size to list of atlases
         self._texture_atlas_bins = {}
+        self._texture_array_bins = {}
 
-    def _require_index(self):
+        # map name to image etc.
+        self._cached_images = weakref.WeakValueDictionary()
+        self._cached_textures = weakref.WeakValueDictionary()
+        self._cached_texture_arrays = weakref.WeakValueDictionary()
+        self._cached_animations = weakref.WeakValueDictionary()
+
+    def _ensure_index(self) -> None:
         if self._index is None:
             self.reindex()
 
-    def reindex(self):
+    def _index_file(self, name: str, locationobj: Location) -> None:
+        if name not in self._index:
+            self._index[name] = locationobj
+
+    def reindex(self) -> None:
         """Refresh the file index.
 
-        You must call this method if `path` is changed or the filesystem
-        layout changes.
+        You must call this method if ``resource.path`` is changed,
+        or the filesystem layout changes.
         """
-        # map name to image etc.
-        self._cached_textures = weakref.WeakValueDictionary()
-        self._cached_images = weakref.WeakValueDictionary()
-        self._cached_animations = weakref.WeakValueDictionary()
-
         self._index = {}
-        for path in self.path:
-            if path.startswith('@'):
-                # Module
-                name = path[1:]
+        for _path_name in self.path:
 
+            # A Python module:
+            if _path_name.startswith('@'):
+                module_name = _path_name[1:]
                 try:
-                    module = __import__(name)
-                except:
+                    module = __import__(module_name)
+                except (ImportError, ValueError):
                     continue
-
-                for component in name.split('.')[1:]:
+                for component in module_name.split('.')[1:]:
                     module = getattr(module, component)
-
                 if hasattr(module, '__file__'):
-                    path = os.path.dirname(module.__file__)
+                    _path_name = os.path.dirname(module.__file__)
                 else:
-                    path = ''  # interactive
-            elif not os.path.isabs(path):
-                # Add script base unless absolute
-                assert '\\' not in path, \
-                    'Backslashes not permitted in relative path'
-                path = os.path.join(self._script_home, path)
+                    _path_name = ''  # interactive
 
-            if os.path.isdir(path):
-                # Filesystem directory
-                path = path.rstrip(os.path.sep)
-                location = FileLocation(path)
-                for dirpath, dirnames, filenames in os.walk(path):
-                    dirpath = dirpath[len(path) + 1:]
+            elif not os.path.isabs(_path_name):
+                # Add script base unless absolute
+                assert r'\\' not in _path_name, "Backslashes are not permitted in relative paths"
+                _path_name = os.path.join(self._script_home, _path_name)
+
+            # A filesystem directory:
+            if os.path.isdir(_path_name):
+                _path_name = _path_name.rstrip(os.path.sep)
+                # os.walk will pass silently if the path is not found:
+                for dirpath, dirnames, filenames in os.walk(_path_name):
+                    dirpath = dirpath[len(_path_name) + 1:]
                     # Force forward slashes for index
                     if dirpath:
-                        parts = [part
-                                 for part
-                                 in dirpath.split(os.sep)
-                                 if part is not None]
+                        parts = [part for part in dirpath.split(os.sep) if part is not None]
                         dirpath = '/'.join(parts)
                     for filename in filenames:
                         if dirpath:
                             index_name = dirpath + '/' + filename
                         else:
                             index_name = filename
-                        self._index_file(index_name, location)
+                        file_location = FileLocation(_path_name)
+                        self._index_file(index_name, file_location)
+
             else:
-                # Find path component that is the ZIP file.
-                dir = ''
+                # The path is not a valid directory. See if it's a
+                # ZIP file, or a nested ZIP file with internal paths.
+                # Ex:  path/to/file.zip
+                #      path/to/file.zip/internal/path
+                zip_directory = ''
                 old_path = None
-                while path and not os.path.isfile(path):
-                    old_path = path
-                    path, tail_dir = os.path.split(path)
-                    if path == old_path:
+                while _path_name and not (os.path.isfile(_path_name)):
+                    old_path = _path_name
+                    _path_name, tail_dir = os.path.split(_path_name)
+                    if _path_name == old_path:
                         break
-                    dir = '/'.join((tail_dir, dir))
-                if path == old_path:
+                    zip_directory = '/'.join((tail_dir, zip_directory))
+                if _path_name == old_path:
                     continue
-                dir = dir.rstrip('/')
 
-                # path is a ZIP file, dir resides within ZIP
-                if path and zipfile.is_zipfile(path):
-                    zip = zipfile.ZipFile(path, 'r')
-                    location = ZIPLocation(zip, dir)
-                    for zip_name in zip.namelist():
-                        # zip_name_dir, zip_name = os.path.split(zip_name)
-                        # assert '\\' not in name_dir
-                        # assert not name_dir.endswith('/')
-                        if zip_name.startswith(dir):
-                            if dir:
-                                zip_name = zip_name[len(dir) + 1:]
-                            self._index_file(zip_name, location)
+                zip_directory = zip_directory.rstrip('/')
 
-    def _index_file(self, name, location):
-        if name not in self._index:
-            self._index[name] = location
+                if zipfile.is_zipfile(_path_name):
+                    zipfileobj = zipfile.ZipFile(_path_name, 'r')
+                    # Returns zipfile.ZipInfo objects:
+                    for fileinfo in zipfileobj.infolist():
+                        if fileinfo.is_dir():
+                            continue
+                        if zip_directory not in fileinfo.filename:
+                            continue
 
-    def file(self, name, mode='rb'):
-        """Load a resource.
+                        filename = fileinfo.filename.lstrip(zip_directory)
+                        filename = filename.lstrip('/')
 
-        :Parameters:
-            `name` : str
+                        file_location = ZIPLocation(zipfileobj, zip_directory)
+                        self._index_file(filename, file_location)
+
+    def file(self, name: str, mode: str = 'rb') -> BytesIO | StringIO | IO:
+        """Load a file-like object.
+
+        Args:
+            name:
                 Filename of the resource to load.
-            `mode` : str
+            mode:
                 Combination of ``r``, ``w``, ``a``, ``b`` and ``t`` characters
                 with the meaning as for the builtin ``open`` function.
-
-        :rtype: file object
         """
-        self._require_index()
+        self._ensure_index()
         try:
-            location = self._index[name]
-            return location.open(name, mode)
+            file_location = self._index[name]
+            return file_location.open(name, mode)
         except KeyError:
             raise ResourceNotFoundException(name)
 
-    def location(self, name):
+    def location(self, filename: str) -> FileLocation | URLLocation | ZIPLocation:
         """Get the location of a resource.
 
         This method is useful for opening files referenced from a resource.
         For example, an HTML file loaded as a resource might reference some
         images.  These images should be located relative to the HTML file, not
         looked up individually in the loader's path.
-
-        :Parameters:
-            `name` : str
-                Filename of the resource to locate.
-
-        :rtype: `Location`
         """
-        self._require_index()
+        self._ensure_index()
         try:
-            return self._index[name]
+            return self._index[filename]
         except KeyError:
-            raise ResourceNotFoundException(name)
+            raise ResourceNotFoundException(filename)
 
-    def add_font(self, name):
+    def add_font(self, filename: str) -> None:
         """Add a font resource to the application.
 
         Fonts not installed on the system must be added to pyglet before they
-        can be used with `font.load`.  Although the font is added with
-        its filename using this function, it is loaded by specifying its
-        family name.  For example::
+        can be used with ``font.load``. Although the font is added with its
+        filename using this function, fonts are always loaded by specifying
+        their family name. For example::
 
             resource.add_font('action_man.ttf')
             action_man = font.load('Action Man')
 
-        :Parameters:
-            `name` : str
-                Filename of the font resource to add.
-
         """
-        self._require_index()
+        self._ensure_index()
         from pyglet import font
-        file = self.file(name)
-        font.add_file(file)
+        fileobj = self.file(filename)
+        font.add_file(fileobj)
 
-    def _alloc_image(self, name, atlas=True):
-        file = self.file(name)
+    def _alloc_texture(self, name: str, use_atlas: bool, border: int) -> Texture | TextureRegion:
+        fileobj = self.file(name)
         try:
-            img = pyglet.image.load(name, file=file)
+            img = pyglet.image.load(name, file=fileobj)
         finally:
-            file.close()
+            fileobj.close()
 
-        if not atlas:
-            return img.get_texture(True)
+        if not use_atlas:
+            return img.get_texture()
 
-        # find an atlas suitable for the image
-        bin = self._get_texture_atlas_bin(img.width, img.height)
-        if bin is None:
-            return img.get_texture(True)
+        # Add the image to a TextureAtlasBin, if possible
+        if texture_bin := self._get_texture_atlas_bin(img.width, img.height, border):
+            return texture_bin.add(img, border)
 
-        return bin.add(img)
+        return img.get_texture()
 
-    def _get_texture_atlas_bin(self, width, height):
-        """A heuristic for determining the atlas bin to use for a given image
-        size.  Returns None if the image should not be placed in an atlas (too
-        big), otherwise the bin (a list of TextureAtlas).
+    def _get_texture_array_bin(self, width: int, height: int) -> TextureArrayBin:
+        bin_size = (width, height)
+        try:
+            texture_array_bin = self._texture_array_bins[bin_size]
+        except KeyError:
+            texture_array_bin = pyglet.graphics.atlas.TextureArrayBin(width, height)
+            self._texture_array_bins[bin_size] = texture_array_bin
+
+        return texture_array_bin
+
+    def _get_texture_atlas_bin(self, width: int, height: int, border: int) -> TextureBin | None:
+        """A heuristic for determining the atlas bin to use for a given image size.
+
+        Returns:
+             None if the image should not be placed in an atlas (too big), otherwise the bin (a list of TextureAtlas).
         """
         # Large images are not placed in an atlas
-        max_texture_size = pyglet.image.atlas.get_max_texture_size()
-        max_size = min(1024, max_texture_size / 2)
+        max_texture_size = pyglet.graphics.texture.get_max_texture_size()
+        max_size = min(2048, max_texture_size) - border
         if width > max_size or height > max_size:
             return None
 
@@ -515,220 +517,312 @@ class Loader(object):
         try:
             texture_bin = self._texture_atlas_bins[bin_size]
         except KeyError:
-            texture_bin = self._texture_atlas_bins[bin_size] =\
-                pyglet.image.atlas.TextureBin()
+            texture_bin = pyglet.graphics.atlas.TextureBin()
+            self._texture_atlas_bins[bin_size] = texture_bin
 
         return texture_bin
 
-    def image(self, name, flip_x=False, flip_y=False, rotate=0, atlas=True):
-        """Load an image with optional transformation.
+    def image(self, name: str) -> ImageData:
+        """Load an image and decode the properties associated with it.
 
-        This is similar to `texture`, except the resulting image will be
-        packed into a :py:class:`~pyglet.image.atlas.TextureBin` if it is an appropriate size for packing.
+        This data is not GPU backed, and represents the raw pixel data, format, and pitch. See :py:class:`~pyglet.image.ImageData`
+        """
+        self._ensure_index()
+        if name in self._cached_images:
+            return self._cached_images[name]
+
+        file_obj = self.file(name)
+        img = pyglet.image.load(name, file=file_obj)
+        self._cached_images[name] = img
+        return img
+
+    @overload
+    def texture(self, name: str, flip_x: bool = False, flip_y: bool = False,
+                rotate: Literal[0, 90, 180, 270, 360] = 0,
+                atlas: Literal[True] = True, border: int = 1) -> TextureRegion:
+        ...
+
+    @overload
+    def texture(self, name: str, flip_x: bool = False, flip_y: bool = False,
+                rotate: Literal[0, 90, 180, 270, 360] = 0,
+                atlas: Literal[False] = False, border: int = 1) -> Texture:
+        ...
+
+    @overload
+    def texture(self, name: str, flip_x: bool = False, flip_y: bool = False,
+                rotate: Literal[0, 90, 180, 270, 360] = 0,
+                atlas: bool = True, border: int = 1) -> Texture | TextureRegion:
+        ...
+
+    def texture(self, name: str, flip_x: bool = False, flip_y: bool = False,
+                rotate: Literal[0, 90, 180, 270, 360] = 0,
+                atlas: bool = True, border: int = 1) -> Texture | TextureRegion:
+        """Loads an image into a GPU backed texture with optional transformations.
+
+        By default, the resulting texture will be packed into a
+        :py:class:`~pyglet.graphics.atlas.TextureBin` (TextureAtlas) if it is an appropriate size for packing.
         This is more efficient than loading images into separate textures.
 
-        :Parameters:
-            `name` : str
-                Filename of the image source to load.
-            `flip_x` : bool
-                If True, the returned image will be flipped horizontally.
-            `flip_y` : bool
-                If True, the returned image will be flipped vertically.
-            `rotate` : int
+        Args:
+            name:
+                The filename of the image source to load.
+            flip_x:
+                If ``True``, the returned image will be flipped horizontally.
+            flip_y:
+                If ``True``, the returned image will be flipped vertically.
+            rotate:
                 The returned image will be rotated clockwise by the given
                 number of degrees (a multiple of 90).
-            `atlas` : bool
-                If True, the image will be loaded into an atlas managed by
-                pyglet. If atlas loading is not appropriate for specific
-                texturing reasons (e.g. border control is required) then set
-                this argument to False.
+            atlas:
+                If ``True``, the image will be loaded into an atlas managed by
+                pyglet. If atlas loading is not appropriate for specific texturing
+                reasons (e.g. border control is required) then set to ``False``.
+            border:
+                Leaves specified pixels of blank space around each image in
+                an atlas, which may help reduce texture bleeding.
 
-        :rtype: `Texture`
-        :return: A complete texture if the image is large or not in an atlas,
-            otherwise a :py:class:`~pyglet.image.TextureRegion` of a texture atlas.
+        .. note:: When using ``flip_x/y`` or ``rotate``, the actual pixel
+                  data is not modified. Instead, the texture coordinates
+                  are manipulated to produce the desired result.
         """
-        self._require_index()
-        if name in self._cached_images:
-            identity = self._cached_images[name]
+        self._ensure_index()
+        if name in self._cached_textures:
+            identity = self._cached_textures[name]
         else:
-            identity = self._cached_images[name] = self._alloc_image(name,
-                                                                     atlas=atlas)
+            identity = self._cached_textures[name] = self._alloc_texture(name, atlas, border)
 
         if not rotate and not flip_x and not flip_y:
             return identity
 
         return identity.get_transform(flip_x, flip_y, rotate)
 
-    def animation(self, name, flip_x=False, flip_y=False, rotate=0):
+    def texture_array(self, name: str, flip_x: bool = False, flip_y: bool = False,
+                      rotate: Literal[0, 90, 180, 270, 360] = 0) -> TextureArrayRegion:
+        """Loads an image into a GPU backed texture array with optional transformations.
+
+        By default, the resulting texture array will be packed into a
+        :py:class:`~pyglet.graphics.atlas.TextureArrayBin` based on the dimensions of the loaded image.
+
+        Args:
+            name:
+                The filename of the image source to load.
+            flip_x:
+                If ``True``, the returned image will be flipped horizontally.
+            flip_y:
+                If ``True``, the returned image will be flipped vertically.
+            rotate:
+                The returned image will be rotated clockwise by the given
+                number of degrees (a multiple of 90).
+
+        .. note:: When using ``flip_x/y`` or ``rotate``, the actual pixel
+                  data is not modified. Instead, the texture coordinates
+                  are manipulated to produce the desired result.
+        """
+        self._ensure_index()
+        if name in self._cached_texture_arrays:
+            identity = self._cached_texture_arrays[name]
+        else:
+            fileobj = self.file(name)
+            try:
+                img = pyglet.image.load(name, file=fileobj)
+            finally:
+                fileobj.close()
+
+            _bin = self._get_texture_array_bin(img.width, img.height)
+            identity = self._cached_texture_arrays[name] = _bin.add(img)
+
+        if not rotate and not flip_x and not flip_y:
+            return identity
+
+        return identity.get_transform(flip_x, flip_y, rotate)
+
+    def animation(self, name: str, flip_x: bool = False, flip_y: bool = False,
+                  rotate: Literal[0, 90, 180, 270, 360] = 0, border: int = 1) -> Animation:
         """Load an animation with optional transformation.
 
         Animations loaded from the same source but with different
         transformations will use the same textures.
 
-        :Parameters:
-            `name` : str
+        Args:
+            name:
                 Filename of the animation source to load.
-            `flip_x` : bool
-                If True, the returned image will be flipped horizontally.
-            `flip_y` : bool
-                If True, the returned image will be flipped vertically.
-            `rotate` : int
+            flip_x:
+                If ``True``, the returned image will be flipped horizontally.
+            flip_y:
+                If ``True``, the returned image will be flipped vertically.
+            rotate:
                 The returned image will be rotated clockwise by the given
-                number of degrees (a multiple of 90).
-
-        :rtype: :py:class:`~pyglet.image.Animation`
+                number of degrees (must be a multiple of 90).
+            border:
+                Leaves specified pixels of blank space around each image in
+                an atlas, which may help reduce texture bleeding.
         """
-        self._require_index()
+        self._ensure_index()
         try:
             identity = self._cached_animations[name]
         except KeyError:
-            animation = pyglet.image.load_animation(name, self.file(name))
-            bin = self._get_texture_atlas_bin(animation.get_max_width(),
-                                              animation.get_max_height())
-            if bin:
-                animation.add_to_texture_bin(bin)
+            _animation = pyglet.image.load_animation(name, self.file(name))
+            texture_bin = self._get_texture_atlas_bin(_animation.get_max_width(),
+                                                      _animation.get_max_height(),
+                                                      border)
+            if texture_bin:
+                _animation.add_to_texture_bin(texture_bin, border)
 
-            identity = self._cached_animations[name] = animation
+            identity = self._cached_animations[name] = _animation
 
         if not rotate and not flip_x and not flip_y:
             return identity
 
         return identity.get_transform(flip_x, flip_y, rotate)
 
-    def get_cached_image_names(self):
-        """Get a list of image filenames that have been cached.
-
-        This is useful for debugging and profiling only.
-
-        :rtype: list
-        :return: List of str
-        """
-        self._require_index()
-        return list(self._cached_images.keys())
-
-    def get_cached_animation_names(self):
+    def get_cached_animation_names(self) -> list[str]:
         """Get a list of animation filenames that have been cached.
 
         This is useful for debugging and profiling only.
-
-        :rtype: list
-        :return: List of str
         """
-        self._require_index()
+        self._ensure_index()
         return list(self._cached_animations.keys())
 
-    def get_texture_bins(self):
+    def get_cached_image_names(self) -> list[str]:
+        """Get a list of image filenames that have been cached.
+
+        This is useful for debugging and profiling only.
+        """
+        self._ensure_index()
+        return list(self._cached_images.keys())
+
+    def get_cached_texture_names(self) -> list[str]:
+        """Get a list of texture filenames that have been cached.
+
+        This is useful for debugging and profiling only.
+        """
+        self._ensure_index()
+        return list(self._cached_textures.keys())
+
+    def get_texture_bins(self) -> list[TextureBin]:
         """Get a list of texture bins in use.
 
         This is useful for debugging and profiling only.
-
-        :rtype: list
-        :return: List of :py:class:`~pyglet.image.atlas.TextureBin`
         """
-        self._require_index()
+        self._ensure_index()
         return list(self._texture_atlas_bins.values())
 
-    def media(self, name, streaming=True):
-        """Load a sound or video resource.
+    def _load_media_resource(self, name: str, streaming: bool, media_capability: MediaTypes) -> Source:
+        self._ensure_index()
+        from pyglet import media  # noqa: PLC0415
 
-        The meaning of `streaming` is as for `media.load`.  Compressed
-        sources cannot be streamed (that is, video and compressed audio
-        cannot be streamed from a ZIP archive).
-
-        :Parameters:
-            `name` : str
-                Filename of the media source to load.
-            `streaming` : bool
-                True if the source should be streamed from disk, False if
-                it should be entirely decoded into memory immediately.
-
-        :rtype: `media.Source`
-        """
-        self._require_index()
-        from pyglet import media
         try:
-            location = self._index[name]
-            if isinstance(location, FileLocation):
-                # Don't open the file if it's streamed from disk -- AVbin
-                # needs to do it.
-                path = os.path.join(location.path, name)
-                return media.load(path, streaming=streaming)
+            file_location = self._index[name]
+            if media_capability == 'audio':
+                load_func = media.load_audio
+            elif media_capability == 'video':
+                load_func = media.load_video
             else:
-                file = location.open(name)
-                return media.load(name, file=file, streaming=streaming)
+                msg = f"Unsupported media capability: {media_capability}"
+                raise ValueError(msg)
+
+            if isinstance(file_location, FileLocation):
+                # Don't open the file if it's streamed from disk
+                file_path = os.path.join(file_location.path, name)
+                return load_func(file_path, streaming=streaming)
+
+            fileobj = file_location.open(name)
+            return load_func(name, file=fileobj, streaming=streaming)
         except KeyError:
             raise ResourceNotFoundException(name)
 
-    def texture(self, name):
-        """Load a texture.
+    def audio(self, name: str, streaming: bool = True) -> Source:
+        """Load a sound resource.
 
-        The named image will be loaded as a single OpenGL texture.  If the
-        dimensions of the image are not powers of 2 a :py:class:`~pyglet.image.TextureRegion` will
-        be returned.
+        The meaning of ``streaming`` is as for :py:func:`~pyglet.media.load_audio`.
+        Compressed sources cannot be streamed (that is, video and compressed
+        audio cannot be streamed from a ZIP archive).
 
-        :Parameters:
-            `name` : str
-                Filename of the image resource to load.
-
-        :rtype: `Texture`
+        Args:
+            name:
+                Filename of the media source to load.
+            streaming:
+                True if the source should be streamed from disk, False if
+                it should be entirely decoded into memory immediately.
         """
-        self._require_index()
-        if name in self._cached_textures:
-            return self._cached_textures[name]
+        return self._load_media_resource(name, streaming=streaming, media_capability='audio')
 
-        file = self.file(name)
-        texture = pyglet.image.load(name, file=file).get_texture()
-        self._cached_textures[name] = texture
-        return texture
+    def video(self, name: str, streaming: bool = True) -> Source:
+        """Load a video resource.
 
-    def html(self, name):
-        """Load an HTML document.
+        The meaning of ``streaming`` is as for :py:func:`~pyglet.media.load_video`.
+        Compressed sources cannot be streamed (that is, video and compressed
+        audio cannot be streamed from a ZIP archive).
 
-        :Parameters:
-            `name` : str
-                Filename of the HTML resource to load.
-
-        :rtype: `FormattedDocument`
+        Args:
+            name:
+                Filename of the media source to load.
+            streaming:
+                True if the source should be streamed from disk, False if
+                it should be entirely decoded into memory immediately.
         """
-        self._require_index()
-        file = self.file(name)
-        return pyglet.text.load(name, file, 'text/html')
+        return self._load_media_resource(name, streaming=streaming, media_capability='video')
 
-    def attributed(self, name):
+    def scene(self, name: str) -> Scene:
+        """Load a 3D Scene."""
+        self._ensure_index()
+        abspathname = os.path.join(os.path.abspath(self.location(name).path), name)
+        return pyglet.model.load(filename=abspathname, file=self.file(name))
+
+    def html(self, name: str) -> AbstractDocument:
+        """Load an HTML document."""
+        self._ensure_index()
+        fileobj = self.file(name)
+        return pyglet.text.load(name, fileobj, 'text/html')
+
+    def attributed(self, name: str) -> AbstractDocument:
         """Load an attributed text document.
 
         See `pyglet.text.formats.attributed` for details on this format.
-
-        :Parameters:
-            `name` : str
-                Filename of the attribute text resource to load.
-
-        :rtype: `FormattedDocument`
         """
-        self._require_index()
-        file = self.file(name)
-        return pyglet.text.load(name, file, 'text/vnd.pyglet-attributed')
+        self._ensure_index()
+        fileobj = self.file(name)
+        return pyglet.text.load(name, fileobj, 'text/vnd.pyglet-attributed')
 
-    def text(self, name):
-        """Load a plain text document.
+    def text(self, name: str) -> AbstractDocument:
+        """Load a plain text document."""
+        self._ensure_index()
+        fileobj = self.file(name)
+        return pyglet.text.load(name, fileobj, 'text/plain')
 
-        :Parameters:
-            `name` : str
-                Filename of the plain text resource to load.
+    def shader(self, name: str, shader_type: str | None = None) -> Shader:
+        """Load a Shader object.
 
-        :rtype: `UnformattedDocument`
+        Args:
+            name:
+                Filename of the Shader source to load.
+            shader_type:
+                A hint for the type of shader, such as 'vertex', 'fragment', etc.
+                Not required if your shader has a standard file extension, such
+                as ``.vert``, ``.frag``, etc..
         """
-        self._require_index()
-        file = self.file(name)
-        return pyglet.text.load(name, file, 'text/plain')
+        self._ensure_index()
+        # https://www.khronos.org/opengles/sdk/tools/Reference-Compiler/
+        shader_extensions = {'comp': "compute",
+                             'frag': "fragment",
+                             'geom': "geometry",
+                             'tesc': "tescontrol",
+                             'tese': "tesevaluation",
+                             'vert': "vertex"}
+        fileobj = self.file(name, 'r')
+        source_string = fileobj.read()
 
-    def get_cached_texture_names(self):
-        """Get the names of textures currently cached.
+        if not shader_type:
+            try:
+                _, extension = os.path.splitext(name)
+                shader_type = shader_extensions[extension.strip(".")]
+            except KeyError:
+                raise UndetectableShaderType(name=name)
 
-        :rtype: list of str
-        """
-        self._require_index()
-        return list(self._cached_textures.keys())
+        if shader_type not in shader_extensions.values():
+            raise UndetectableShaderType(name=name)
+
+        return pyglet.graphics.Shader(source_string, shader_type)
 
 
 #: Default resource search path.
@@ -761,12 +855,65 @@ location = _default_loader.location
 add_font = _default_loader.add_font
 image = _default_loader.image
 animation = _default_loader.animation
-get_cached_image_names = _default_loader.get_cached_image_names
-get_cached_animation_names = _default_loader.get_cached_animation_names
-get_texture_bins = _default_loader.get_texture_bins
-media = _default_loader.media
-texture = _default_loader.texture
+audio = _default_loader.audio
+video = _default_loader.video
+
+@overload
+def texture(name: str, flip_x: bool = False, flip_y: bool = False, rotate: Literal[0, 90, 180, 270, 360] = 0,
+            atlas: Literal[True] = True, border: int = 1) -> TextureRegion:
+    ...
+
+
+@overload
+def texture(name: str, flip_x: bool = False, flip_y: bool = False, rotate: Literal[0, 90, 180, 270, 360] = 0,
+            atlas: Literal[False] = False, border: int = 1) -> Texture:
+    ...
+
+
+@overload
+def texture(name: str, flip_x: bool = False, flip_y: bool = False, rotate: Literal[0, 90, 180, 270, 360] = 0,
+            atlas: bool = True, border: int = 1) -> Texture | TextureRegion:
+    ...
+
+
+def texture(name: str, flip_x: bool = False, flip_y: bool = False, rotate: Literal[0, 90, 180, 270, 360] = 0,
+            atlas: bool = True, border: int = 1) -> Texture | TextureRegion:
+    """Loads an image into a GPU backed texture with optional transformations.
+
+    By default, the resulting texture will be packed into a
+    :py:class:`~pyglet.graphics.atlas.TextureBin` (TextureAtlas) if it is an appropriate size for packing.
+    This is more efficient than loading images into separate textures.
+
+    Args:
+        name:
+            The filename of the image source to load.
+        flip_x:
+            If ``True``, the returned image will be flipped horizontally.
+        flip_y:
+            If ``True``, the returned image will be flipped vertically.
+        rotate:
+            The returned image will be rotated clockwise by the given
+            number of degrees (a multiple of 90).
+        atlas:
+            If ``True``, the image will be loaded into an atlas managed by
+            pyglet. If atlas loading is not appropriate for specific texturing
+            reasons (e.g. border control is required) then set to ``False``.
+        border:
+            Leaves specified pixels of blank space around each image in
+            an atlas, which may help reduce texture bleeding.
+
+    .. note:: When using ``flip_x/y`` or ``rotate``, the actual pixel
+              data is not modified. Instead, the texture coordinates
+              are manipulated to produce the desired result.
+    """
+    return _default_loader.texture(name, flip_x, flip_y, rotate, atlas, border)
+
 html = _default_loader.html
 attributed = _default_loader.attributed
 text = _default_loader.text
+scene = _default_loader.scene
+shader = _default_loader.shader
 get_cached_texture_names = _default_loader.get_cached_texture_names
+get_cached_image_names = _default_loader.get_cached_image_names
+get_cached_animation_names = _default_loader.get_cached_animation_names
+get_texture_bins = _default_loader.get_texture_bins
